@@ -926,7 +926,11 @@ class _CameraPreview(QWidget):
 
 
 class SetupOverlay(QWidget):
-    done = pyqtSignal(str, str)
+    # Emits a single dict: {"provider": str, "gemini_key": str, "openai_key": str,
+    # "anthropic_key": str, "os": str}
+    done = pyqtSignal(dict)
+
+    _PROVIDERS = [("gemini", "Gemini"), ("openai", "OpenAI"), ("anthropic", "Claude")]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -943,6 +947,7 @@ class SetupOverlay(QWidget):
             _OS.lower(), "linux"
         )
         self._sel_os = detected
+        self._sel_provider = "gemini"
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 22, 30, 22)
@@ -957,6 +962,21 @@ class SetupOverlay(QWidget):
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
 
+        def _key_field(placeholder: str) -> QLineEdit:
+            field = QLineEdit()
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+            field.setPlaceholderText(placeholder)
+            field.setFont(QFont("Courier New", 10))
+            field.setFixedHeight(32)
+            field.setStyleSheet(f"""
+                QLineEdit {{
+                    background: #000d12; color: {C.TEXT};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
+                }}
+                QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+            """)
+            return field
+
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
         layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
@@ -965,22 +985,52 @@ class SetupOverlay(QWidget):
         sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("GEMINI API KEY", 8, color=C.TEXT_DIM,
+        # ── AI provider picker ──────────────────────────────────────────────
+        layout.addWidget(_lbl("AI PROVIDER", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
-        self._key_input = QLineEdit()
-        self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_input.setPlaceholderText("AIza…")
-        self._key_input.setFont(QFont("Courier New", 10))
-        self._key_input.setFixedHeight(32)
-        self._key_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: #000d12; color: {C.TEXT};
-                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
-            }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
-        """)
+        _provider_note = _lbl(
+            "Gemini also powers voice — its key is required no matter which "
+            "provider you pick as the AI brain (Claude has no voice API).",
+            7, color=C.PRI_DIM, align=Qt.AlignmentFlag.AlignLeft
+        )
+        _provider_note.setWordWrap(True)
+        layout.addWidget(_provider_note)
+
+        provider_row = QHBoxLayout(); provider_row.setSpacing(6)
+        self._provider_btns: dict[str, QPushButton] = {}
+        for key, label in self._PROVIDERS:
+            btn = QPushButton(label)
+            btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+            btn.setFixedHeight(32)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _, k=key: self._sel_ai(k))
+            provider_row.addWidget(btn)
+            self._provider_btns[key] = btn
+        layout.addLayout(provider_row)
+        layout.addSpacing(8)
+
+        # ── API key fields (Gemini always visible; OpenAI/Claude conditional) ──
+        layout.addWidget(_lbl("GEMINI API KEY  (required — powers voice)", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        self._key_input = _key_field("AIza…")
         layout.addWidget(self._key_input)
-        layout.addSpacing(12)
+        layout.addSpacing(6)
+
+        self._openai_label = _lbl("OPENAI API KEY", 8, color=C.TEXT_DIM,
+                                   align=Qt.AlignmentFlag.AlignLeft)
+        self._openai_input = _key_field("sk-…")
+        layout.addWidget(self._openai_label)
+        layout.addWidget(self._openai_input)
+        layout.addSpacing(6)
+
+        self._anthropic_label = _lbl("ANTHROPIC API KEY", 8, color=C.TEXT_DIM,
+                                      align=Qt.AlignmentFlag.AlignLeft)
+        self._anthropic_input = _key_field("sk-ant-…")
+        layout.addWidget(self._anthropic_label)
+        layout.addWidget(self._anthropic_input)
+        layout.addSpacing(6)
+
+        self._sel_ai(self._sel_provider)  # applies styling + initial field visibility
 
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
@@ -1043,15 +1093,64 @@ class SetupOverlay(QWidget):
                     QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
                 """)
 
+    def _sel_ai(self, key: str):
+        self._sel_provider = key
+        pal = {"gemini":(C.PRI,"#001a22"),"openai":(C.GREEN,"#001a0d"),"anthropic":(C.ACC2,"#1a1400")}
+        for k, btn in self._provider_btns.items():
+            if k == key:
+                fg, bg = pal[k]
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {fg}; color: {bg};
+                        border: none; border-radius: 3px; font-weight: bold;
+                    }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: #000d12; color: {C.TEXT_DIM};
+                        border: 1px solid {C.BORDER}; border-radius: 3px;
+                    }}
+                    QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
+                """)
+
+        # Gemini's key field is always visible (voice always needs it). Only show
+        # the OpenAI/Claude fields when that provider is the selected AI brain.
+        self._openai_label.setVisible(key == "openai")
+        self._openai_input.setVisible(key == "openai")
+        self._anthropic_label.setVisible(key == "anthropic")
+        self._anthropic_input.setVisible(key == "anthropic")
+
+    def _mark_invalid(self, field: QLineEdit) -> None:
+        field.setStyleSheet(
+            field.styleSheet() + f" QLineEdit {{ border: 1px solid {C.RED}; }}"
+        )
+
     def _submit(self):
-        key = self._key_input.text().strip()
-        if not key:
-            self._key_input.setStyleSheet(
-                self._key_input.styleSheet() +
-                f" QLineEdit {{ border: 1px solid {C.RED}; }}"
-            )
+        gemini_key    = self._key_input.text().strip()
+        openai_key    = self._openai_input.text().strip()
+        anthropic_key = self._anthropic_input.text().strip()
+
+        ok = True
+        if not gemini_key:
+            self._mark_invalid(self._key_input)
+            ok = False
+        if self._sel_provider == "openai" and not openai_key:
+            self._mark_invalid(self._openai_input)
+            ok = False
+        if self._sel_provider == "anthropic" and not anthropic_key:
+            self._mark_invalid(self._anthropic_input)
+            ok = False
+        if not ok:
             return
-        self.done.emit(key, self._sel_os)
+
+        self.done.emit({
+            "provider":       self._sel_provider,
+            "gemini_key":     gemini_key,
+            "openai_key":     openai_key,
+            "anthropic_key":  anthropic_key,
+            "os":             self._sel_os,
+        })
 
 
 class RemoteKeyOverlay(QWidget):
@@ -2338,17 +2437,16 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
+        from memory.config_manager import is_configured
         try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
+            return is_configured()
         except Exception:
             return False
 
     def _show_setup(self):
         ov = SetupOverlay(self.centralWidget())
         cw = self.centralWidget()
-        ow, oh = 460, 390
+        ow, oh = 460, 560
         ov.setGeometry(
             (cw.width()  - ow) // 2,
             (cw.height() - oh) // 2,
@@ -2358,18 +2456,36 @@ class MainWindow(QMainWindow):
         ov.show()
         self._overlay = ov
 
-    def _on_setup_done(self, key: str, os_name: str):
+    def _on_setup_done(self, result: dict):
+        from memory.config_manager import save_api_key, save_ai_provider
+
+        provider = result.get("provider", "gemini")
+        save_api_key("gemini", result.get("gemini_key", ""))
+        if result.get("openai_key"):
+            save_api_key("openai", result["openai_key"])
+        if result.get("anthropic_key"):
+            save_api_key("anthropic", result["anthropic_key"])
+        save_ai_provider(provider)
+
+        os_name = result.get("os", "windows")
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
+        cfg = {}
+        if API_FILE.exists():
+            try:
+                cfg = json.loads(API_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                cfg = {}
+        cfg["os_system"] = os_name
+        API_FILE.write_text(json.dumps(cfg, indent=4), encoding="utf-8")
+
         self._ready = True
         if self._overlay:
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. JARVIS online.")
+        self._log.append_log(
+            f"SYS: Initialised. Provider={provider.upper()}. OS={os_name.upper()}. JARVIS online."
+        )
 
 class _RootShim:
     def __init__(self, app: QApplication):

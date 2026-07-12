@@ -1,6 +1,8 @@
 sounddevice
 google-genai
-google-generativeai
+google-generativeai  # NOTE: appears unused (no `import google.generativeai` anywhere in the codebase) — confirm before removing
+openai
+anthropic
 pillow
 requests
 beautifulsoup4

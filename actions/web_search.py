@@ -1,27 +1,18 @@
 #web_search.py
-import json
-import sys
-from pathlib import Path
-
-def _get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
-
-
-BASE_DIR        = _get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
-
-def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+from core.cloud_llm import get_provider
+from memory.config_manager import get_gemini_key
 
 
 def _gemini_search(query: str) -> str:
+    # Gemini's built-in google_search grounding tool is Gemini-specific — for
+    # any other provider, raise immediately so callers fall through to their
+    # existing DDG-fallback path.
+    if get_provider() != "gemini":
+        raise RuntimeError("Native web search requires the Gemini provider.")
+
     from google import genai
 
-    client   = genai.Client(api_key=_get_api_key())
+    client   = genai.Client(api_key=get_gemini_key())
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=query,
@@ -120,9 +111,13 @@ def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     Returns (headline_list, raw_text_for_display).
     """
     import re
+
+    if get_provider() != "gemini":
+        raise RuntimeError("Native headline search requires the Gemini provider.")
+
     from google import genai
 
-    client = genai.Client(api_key=_get_api_key())
+    client = genai.Client(api_key=get_gemini_key())
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=f"Current world news: {n} headlines. Numbered list, titles only.",

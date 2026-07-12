@@ -1,7 +1,5 @@
 #desktop.py
 import os
-import sys
-import json
 import shutil
 import subprocess
 import tempfile
@@ -18,16 +16,6 @@ except ImportError:
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
-def _get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
-
-def _get_api_key() -> str:
-    path = _get_base_dir() / "config" / "api_keys.json"
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
-    
 def _get_desktop() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_DESKTOP_DIR", "")
@@ -103,8 +91,7 @@ def _execute_generated_code(code: str, player=None) -> str:
 
 def _ask_gemini_for_desktop_action(task: str) -> str:
 
-    from google import genai as _genai
-    _client = _genai.Client(api_key=_get_api_key())
+    from core.cloud_llm import generate_text
 
     desktop = str(_get_desktop())
 
@@ -142,8 +129,7 @@ Output ONLY the Python code. No explanation, no markdown, no backticks.
 Task: {task}"""
 
     try:
-        response = _client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        code = response.text.strip()
+        code = generate_text(prompt, role="quality").strip()
         if code.startswith("```"):
             lines = code.split("\n")
             code  = "\n".join(lines[1:-1]).strip()

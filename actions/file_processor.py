@@ -25,19 +25,49 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
-def _get_api_key() -> str:
-    config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
-
-
 def _gemini_client():
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    """
+    Legacy wrapper name kept to minimize diff across the ~10 call sites in this
+    file — now provider-agnostic (routes through core.cloud_llm to whichever
+    provider is selected: Gemini, OpenAI, or Claude).
+
+    Detects the three content shapes used in this file and routes accordingly:
+      - a plain string                              -> generate_text
+      - [prompt, PIL.Image.Image]                    -> generate_vision
+      - [prompt, {"mime_type": ..., "data": bytes}]   -> generate_audio_transcript
+    """
+    from core.cloud_llm import (
+        CloudLLMError, generate_text, generate_vision, generate_audio_transcript,
+    )
+
+    class _Response:
+        def __init__(self, text: str):
+            self.text = text
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model="gemini-2.5-flash", contents=contents)
+            if isinstance(contents, str):
+                return _Response(generate_text(contents, role="default"))
+
+            if isinstance(contents, (list, tuple)) and len(contents) == 2:
+                prompt, payload = contents
+
+                if isinstance(payload, dict) and "mime_type" in payload and "data" in payload:
+                    text = generate_audio_transcript(
+                        prompt, payload["data"], payload["mime_type"], role="default"
+                    )
+                    return _Response(text)
+
+                if hasattr(payload, "save"):  # PIL.Image.Image
+                    import io
+                    fmt  = (getattr(payload, "format", None) or "JPEG").upper()
+                    buf  = io.BytesIO()
+                    payload.save(buf, format=fmt)
+                    mime = f"image/{fmt.lower()}"
+                    text = generate_vision(prompt, buf.getvalue(), mime_type=mime, role="default")
+                    return _Response(text)
+
+            raise CloudLLMError(f"Unsupported contents shape for _gemini_client(): {type(contents)!r}")
 
     return _W()
 

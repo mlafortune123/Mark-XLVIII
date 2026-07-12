@@ -6,31 +6,26 @@ import time
 from pathlib import Path
 
 
-def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
-
-
-BASE_DIR         = get_base_dir()
-API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
 PROJECTS_DIR     = Path.home() / "Desktop" / "JarvisProjects"
 MAX_FIX_ATTEMPTS = 5
-MODEL_PLANNER    = "gemini-2.5-flash"
-MODEL_WRITER     = "gemini-2.5-flash"
-
-def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+# dev_agent writes and executes code autonomously — use the "quality" tier for
+# both the planner and writer roles.
+MODEL_PLANNER    = "quality"
+MODEL_WRITER     = "quality"
 
 
-def _get_model(model_name: str):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+def _get_model(role: str):
+    """Legacy wrapper name kept to minimize diff across call sites — now provider-agnostic.
+    `role` is one of core.cloud_llm's tiers ("fast" | "default" | "quality")."""
+    from core.cloud_llm import generate_text
+
+    class _Response:
+        def __init__(self, text: str):
+            self.text = text
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model=model_name, contents=contents)
+            return _Response(generate_text(contents, role=role))
 
     return _W()
 

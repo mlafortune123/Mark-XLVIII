@@ -63,7 +63,8 @@ def _save_config_key(key: str, value) -> None:
 
 
 def _get_api_key() -> str:
-    key = _load_config().get("gemini_api_key", "")
+    from memory.config_manager import get_gemini_key
+    key = get_gemini_key()
     if not key:
         raise RuntimeError("gemini_api_key not found in config.")
     return key
