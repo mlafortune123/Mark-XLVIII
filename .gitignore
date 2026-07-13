@@ -1,2 +1,23 @@
 /documents
 documents/
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets / credentials
+config/api_keys.json
+config/certs/
+*.pem
+*.key
+.env
+.env.*
+
+# macOS
+.DS_Store
