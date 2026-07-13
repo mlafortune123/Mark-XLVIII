@@ -1153,6 +1153,190 @@ class SetupOverlay(QWidget):
         })
 
 
+class OnboardingOverlay(QWidget):
+    # Emits a single dict: {"startup_news": bool, "startup_weather": bool,
+    # "weather_city": str, "followed_topics": list[str]}
+    done = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            OnboardingOverlay {{
+                background: rgba(0, 6, 10, 245);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+
+        self._sel_news    = True
+        self._sel_weather = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 22, 30, 22)
+        layout.setSpacing(8)
+
+        def _lbl(txt, font_size=9, bold=False, color=C.PRI,
+                 align=Qt.AlignmentFlag.AlignCenter):
+            w = QLabel(txt)
+            w.setAlignment(align)
+            w.setFont(QFont("Courier New", font_size,
+                            QFont.Weight.Bold if bold else QFont.Weight.Normal))
+            w.setStyleSheet(f"color: {color}; background: transparent;")
+            w.setWordWrap(True)
+            return w
+
+        def _text_field(placeholder: str) -> QLineEdit:
+            field = QLineEdit()
+            field.setPlaceholderText(placeholder)
+            field.setFont(QFont("Courier New", 10))
+            field.setFixedHeight(32)
+            field.setStyleSheet(f"""
+                QLineEdit {{
+                    background: #000d12; color: {C.TEXT};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
+                }}
+                QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+            """)
+            return field
+
+        layout.addWidget(_lbl("◈  PERSONALISE J.A.R.V.I.S.", 13, True))
+        layout.addWidget(_lbl("Choose what Jarvis does when it starts up.", 9, color=C.PRI_DIM))
+        layout.addSpacing(6)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
+        layout.addSpacing(4)
+
+        # ── News toggle ──────────────────────────────────────────────────────
+        layout.addWidget(_lbl("DAILY NEWS SUMMARY", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        news_row = QHBoxLayout(); news_row.setSpacing(6)
+        self._news_btns: dict[bool, QPushButton] = {}
+        for val, label in [(True, "Yes"), (False, "No")]:
+            btn = QPushButton(label)
+            btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _, v=val: self._sel_news_toggle(v))
+            news_row.addWidget(btn)
+            self._news_btns[val] = btn
+        layout.addLayout(news_row)
+        layout.addSpacing(8)
+
+        # ── Weather toggle + city field ──────────────────────────────────────
+        layout.addWidget(_lbl("DAILY WEATHER REPORT", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        weather_row = QHBoxLayout(); weather_row.setSpacing(6)
+        self._weather_btns: dict[bool, QPushButton] = {}
+        for val, label in [(True, "Yes"), (False, "No")]:
+            btn = QPushButton(label)
+            btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _, v=val: self._sel_weather_toggle(v))
+            weather_row.addWidget(btn)
+            self._weather_btns[val] = btn
+        layout.addLayout(weather_row)
+        layout.addSpacing(6)
+
+        self._city_label = _lbl("CITY", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft)
+        self._city_input = _text_field("e.g. New York")
+        layout.addWidget(self._city_label)
+        layout.addWidget(self._city_input)
+        layout.addSpacing(8)
+
+        self._sel_news_toggle(self._sel_news)
+        self._sel_weather_toggle(self._sel_weather)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
+        layout.addSpacing(4)
+
+        # ── Followed topics ──────────────────────────────────────────────────
+        layout.addWidget(_lbl("TOPICS TO FOLLOW (optional)", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        self._topics_input = _text_field("e.g. F1, AI research, Bitcoin")
+        layout.addWidget(self._topics_input)
+        layout.addSpacing(12)
+
+        start_btn = QPushButton("▸  START")
+        start_btn.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        start_btn.setFixedHeight(36)
+        start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        start_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C.PRI};
+                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
+            }}
+            QPushButton:hover {{
+                background: {C.PRI_GHO}; border: 1px solid {C.PRI};
+            }}
+        """)
+        start_btn.clicked.connect(self._submit)
+        layout.addWidget(start_btn)
+
+        skip_btn = QPushButton("Skip for now")
+        skip_btn.setFont(QFont("Courier New", 8))
+        skip_btn.setFlat(True)
+        skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        skip_btn.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_DIM}; border: none; }}
+            QPushButton:hover {{ color: {C.TEXT}; }}
+        """)
+        skip_btn.clicked.connect(self._skip)
+        layout.addWidget(skip_btn)
+
+    def _toggle_style(self, btns: dict, selected):
+        for k, btn in btns.items():
+            if k == selected:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {C.PRI}; color: #001a22;
+                        border: none; border-radius: 3px; font-weight: bold;
+                    }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: #000d12; color: {C.TEXT_DIM};
+                        border: 1px solid {C.BORDER}; border-radius: 3px;
+                    }}
+                    QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
+                """)
+
+    def _sel_news_toggle(self, val: bool):
+        self._sel_news = val
+        self._toggle_style(self._news_btns, val)
+
+    def _sel_weather_toggle(self, val: bool):
+        self._sel_weather = val
+        self._toggle_style(self._weather_btns, val)
+        self._city_label.setVisible(val)
+        self._city_input.setVisible(val)
+
+    def _collect(self) -> dict:
+        topics = [t.strip() for t in self._topics_input.text().split(",")]
+        topics = list(dict.fromkeys(t for t in topics if t))  # dedupe, drop empties
+        return {
+            "startup_news":    self._sel_news,
+            "startup_weather": self._sel_weather,
+            "weather_city":    self._city_input.text().strip() if self._sel_weather else "",
+            "followed_topics": topics,
+        }
+
+    def _submit(self):
+        self.done.emit(self._collect())
+
+    def _skip(self):
+        self.done.emit({
+            "startup_news":    True,
+            "startup_weather": False,
+            "weather_city":    "",
+            "followed_topics": [],
+        })
+
+
 class RemoteKeyOverlay(QWidget):
     """Floating overlay — QR code for instant phone pairing + manual key fallback."""
 
@@ -1516,7 +1700,7 @@ class MainWindow(QMainWindow):
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
 
-        self._overlay: SetupOverlay | None = None
+        self._overlay: SetupOverlay | OnboardingOverlay | None = None
         self._ready = self._check_config()
         if not self._ready:
             self._show_setup()
@@ -2438,13 +2622,39 @@ class MainWindow(QMainWindow):
 
     def _check_config(self) -> bool:
         from memory.config_manager import is_configured
+        from memory.preferences_manager import is_onboarded
         try:
-            return is_configured()
+            return is_configured() and is_onboarded()
         except Exception:
             return False
 
     def _show_setup(self):
-        ov = SetupOverlay(self.centralWidget())
+        from memory.config_manager import is_configured
+        try:
+            configured = is_configured()
+        except Exception:
+            configured = False
+
+        if not configured:
+            ov = SetupOverlay(self.centralWidget())
+            ow, oh = 460, 560
+            ov.done.connect(self._on_setup_done)
+        else:
+            ov = OnboardingOverlay(self.centralWidget())
+            ow, oh = 460, 560
+            ov.done.connect(self._on_onboarding_done)
+
+        cw = self.centralWidget()
+        ov.setGeometry(
+            (cw.width()  - ow) // 2,
+            (cw.height() - oh) // 2,
+            ow, oh,
+        )
+        ov.show()
+        self._overlay = ov
+
+    def _show_onboarding(self):
+        ov = OnboardingOverlay(self.centralWidget())
         cw = self.centralWidget()
         ow, oh = 460, 560
         ov.setGeometry(
@@ -2452,12 +2662,13 @@ class MainWindow(QMainWindow):
             (cw.height() - oh) // 2,
             ow, oh,
         )
-        ov.done.connect(self._on_setup_done)
+        ov.done.connect(self._on_onboarding_done)
         ov.show()
         self._overlay = ov
 
     def _on_setup_done(self, result: dict):
         from memory.config_manager import save_api_key, save_ai_provider
+        from memory.preferences_manager import is_onboarded
 
         provider = result.get("provider", "gemini")
         save_api_key("gemini", result.get("gemini_key", ""))
@@ -2478,14 +2689,27 @@ class MainWindow(QMainWindow):
         cfg["os_system"] = os_name
         API_FILE.write_text(json.dumps(cfg, indent=4), encoding="utf-8")
 
+        self._log.append_log(
+            f"SYS: Initialised. Provider={provider.upper()}. OS={os_name.upper()}."
+        )
+
+        if not is_onboarded():
+            self._show_onboarding()
+        else:
+            self._finish_ready()
+
+    def _on_onboarding_done(self, result: dict):
+        from memory.preferences_manager import complete_onboarding
+        complete_onboarding(result)
+        self._finish_ready()
+
+    def _finish_ready(self):
         self._ready = True
         if self._overlay:
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._log.append_log(
-            f"SYS: Initialised. Provider={provider.upper()}. OS={os_name.upper()}. JARVIS online."
-        )
+        self._log.append_log("SYS: JARVIS online.")
 
 class _RootShim:
     def __init__(self, app: QApplication):

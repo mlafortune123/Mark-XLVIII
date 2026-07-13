@@ -28,6 +28,7 @@ from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
 )
 from memory.config_manager import get_gemini_key, get_openai_key, get_anthropic_key
+from memory.preferences_manager import load_preferences, save_preferences
 from core.cloud_llm import get_provider
 from core.live_voice import LiveVoiceSession, GeminiLiveSession, OpenAIRealtimeSession
 
@@ -803,13 +804,19 @@ class JarvisLive:
 
     async def _send_startup_briefing(self) -> None:
         """
-        Two-phase briefing for instant perceived response:
+        Two/three-phase briefing for instant perceived response:
           Phase 1 — immediate greeting (no tools, no fetch) → Jarvis speaks in <2s
-          Phase 2 — news fetched in background, injected after greeting finishes
+          Phase 2 — news fetched in background, injected after greeting finishes (if enabled)
+          Phase 3 — weather fetched in background (if enabled)
         """
         await asyncio.sleep(0.3)
         if not self._voice_session:
             return
+
+        prefs           = load_preferences()
+        want_news       = prefs.get("startup_news", True)
+        want_weather    = prefs.get("startup_weather", False)
+        weather_city    = (prefs.get("weather_city") or "").strip()
 
         # ── memory ───────────────────────────────────────────────────────────
         memory   = load_memory()
@@ -828,8 +835,9 @@ class JarvisLive:
         # ── Phase 1: instant greeting — one simple sentence ──────────────────
         lang_clause = f" Respond in {lang}." if lang else ""
         name_clause = f" Address the user as {name}." if name else ""
+        news_clause = " and say you are fetching today's news headlines now" if want_news else ""
         p1 = (
-            f"Greet the user, mention it is {time_str}, and say you are fetching today's news headlines now. "
+            f"Greet the user, mention it is {time_str}{news_clause}. "
             f"One short sentence only. Do not call any tools.{lang_clause}{name_clause}"
         )
 
@@ -837,13 +845,24 @@ class JarvisLive:
         self.ui.write_log("SYS: Briefing phase 1 (greeting) sent.")
 
         # ── Phase 2: fetch news in background, deliver after greeting plays ───
-        async def _guarded_news():
-            try:
-                await self._briefing_news_phase(lang)
-            except Exception as e:
-                print(f"[Briefing] Phase 2 error: {e}")
-                self.ui.write_log(f"SYS: Briefing news phase failed: {e}")
-        asyncio.create_task(_guarded_news())
+        if want_news:
+            async def _guarded_news():
+                try:
+                    await self._briefing_news_phase(lang)
+                except Exception as e:
+                    print(f"[Briefing] Phase 2 error: {e}")
+                    self.ui.write_log(f"SYS: Briefing news phase failed: {e}")
+            asyncio.create_task(_guarded_news())
+
+        # ── Phase 3: fetch weather in background ──────────────────────────────
+        if want_weather and weather_city:
+            async def _guarded_weather():
+                try:
+                    await self._briefing_weather_phase(weather_city, lang)
+                except Exception as e:
+                    print(f"[Briefing] Phase 3 error: {e}")
+                    self.ui.write_log(f"SYS: Briefing weather phase failed: {e}")
+            asyncio.create_task(_guarded_weather())
 
     async def _briefing_news_phase(self, lang: str) -> None:
         """
@@ -868,6 +887,26 @@ class JarvisLive:
 
         await self._voice_session.send_text(p2, turn_complete=True)
         self.ui.write_log("SYS: Briefing phase 2 (news) sent.")
+
+    async def _briefing_weather_phase(self, city: str, lang: str) -> None:
+        """
+        Sends phase-3 (weather) to Gemini a couple seconds after phase-1 so it
+        doesn't collide with the phase-2 news audio.
+        """
+        lang_str = f" Respond in {lang}." if lang else ""
+
+        await asyncio.sleep(3.0)
+
+        if not self._voice_session:
+            return
+
+        p3 = (
+            f"[BRIEFING] Call weather_report with city='{city}' to show today's weather, "
+            f"then say the current conditions for {city} in one short sentence.{lang_str}"
+        )
+
+        await self._voice_session.send_text(p3, turn_complete=True)
+        self.ui.write_log("SYS: Briefing phase 3 (weather) sent.")
 
     # ── System monitor ──────────────────────────────────────────────────────────
 
@@ -911,6 +950,55 @@ class JarvisLive:
                 self.ui.write_log("SYS: Proactive check-in.")
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
+
+    # ── Daily topic digest ──────────────────────────────────────────────────────
+
+    _TOPIC_DIGEST_HOUR = 8   # local hour (24h) after which the daily digest may fire
+
+    async def _run_topic_digest(self) -> None:
+        """
+        Background task: once a day (after _TOPIC_DIGEST_HOUR local time), if the
+        user has followed topics, searches the news for each and reads a brief
+        summary aloud. Delivery is date-stamped in preferences so it survives
+        app restarts and never fires twice in the same day.
+        """
+        from datetime import datetime
+
+        while True:
+            try:
+                prefs  = load_preferences()
+                topics = prefs.get("followed_topics") or []
+                now    = datetime.now()
+                today  = now.strftime("%Y-%m-%d")
+
+                ready = (
+                    topics
+                    and now.hour >= self._TOPIC_DIGEST_HOUR
+                    and prefs.get("topic_digest_last") != today
+                    and self._voice_session
+                    and not self._voice_session.is_speaking()
+                )
+                if ready:
+                    memory   = load_memory()
+                    identity = memory.get("identity", {})
+                    lang_e   = identity.get("language", {})
+                    lang     = (lang_e.get("value", "") if isinstance(lang_e, dict) else str(lang_e)).strip()
+                    lang_str = f" Respond in {lang}." if lang else ""
+
+                    topic_list = ", ".join(topics)
+                    prompt = (
+                        f"[TOPIC DIGEST] The user follows these topics: {topic_list}. "
+                        "For each topic, call web_search with mode='news' and query set to that topic, "
+                        "then give a brief spoken summary of the most notable update per topic — "
+                        f"a sentence or two each.{lang_str}"
+                    )
+                    await self._voice_session.send_text(prompt, turn_complete=True)
+                    self.ui.write_log("SYS: Topic digest sent.")
+                    save_preferences({"topic_digest_last": today})
+            except Exception as e:
+                print(f"[TopicDigest] ⚠️ {e}")
+
+            await asyncio.sleep(300)   # re-check every 5 minutes
 
     # ── Phone audio relay ────────────────────────────────────────────────────────
 
@@ -1046,6 +1134,7 @@ class JarvisLive:
                     tg.create_task(voice_session.run())
                     tg.create_task(self._run_system_monitor())
                     tg.create_task(self._run_proactive_mode())
+                    tg.create_task(self._run_topic_digest())
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
