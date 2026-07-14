@@ -2628,12 +2628,20 @@ class MainWindow(QMainWindow):
         except Exception:
             return False
 
+    def _close_overlay(self):
+        if self._overlay is not None:
+            self._overlay.hide()
+            self._overlay.deleteLater()
+            self._overlay = None
+
     def _show_setup(self):
         from memory.config_manager import is_configured
         try:
             configured = is_configured()
         except Exception:
             configured = False
+
+        self._close_overlay()
 
         if not configured:
             ov = SetupOverlay(self.centralWidget())
@@ -2654,6 +2662,7 @@ class MainWindow(QMainWindow):
         self._overlay = ov
 
     def _show_onboarding(self):
+        self._close_overlay()
         ov = OnboardingOverlay(self.centralWidget())
         cw = self.centralWidget()
         ow, oh = 460, 560
@@ -2705,9 +2714,7 @@ class MainWindow(QMainWindow):
 
     def _finish_ready(self):
         self._ready = True
-        if self._overlay:
-            self._overlay.hide()
-            self._overlay = None
+        self._close_overlay()
         self._apply_state("LISTENING")
         self._log.append_log("SYS: JARVIS online.")
 
