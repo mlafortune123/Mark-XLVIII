@@ -45,6 +45,8 @@ def _user_data_dir() -> Path:
         appdata = os.environ.get("APPDATA")
         if appdata:
             return Path(appdata) / "MarkXLVIII"
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "MarkXLVIII"
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent
 

@@ -1,0 +1,38 @@
+name: Build macOS installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-freeze.txt
+          pip install pyinstaller
+
+      - name: Run PyInstaller
+        run: pyinstaller mark48-mac.spec
+
+      - name: Build .dmg
+        run: ./scripts/build_dmg.sh
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MARK-XLVIII-Setup-dmg
+          path: installer_output/MARK-XLVIII-Setup.dmg
+          if-no-files-found: error

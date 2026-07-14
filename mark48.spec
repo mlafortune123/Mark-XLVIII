@@ -33,6 +33,9 @@ a = Analysis(
         # config (voice runs through Gemini Live / OpenAI Realtime + edge-tts).
         # Skip if not installed rather than erroring the build.
         'faster_whisper', 'vosk', 'kokoro', 'torch', 'transformers',
+        # browser_control.py degrades gracefully without this (see
+        # actions/browser_control.py) — excluded to keep the build lean.
+        'playwright',
     ],
     noarchive=False,
     optimize=0,
