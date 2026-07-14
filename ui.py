@@ -28,7 +28,7 @@ from PyQt6.QtGui import (
     QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
@@ -1165,9 +1165,11 @@ class SetupOverlay(QWidget):
 
 class OnboardingOverlay(QWidget):
     # Emits a single dict: {"startup_news": bool, "startup_weather": bool,
-    # "weather_city": str, "followed_topics": list[str]}
+    # "weather_city": str, "followed_topics": list[str], "language": str, "voice": str}
     done   = pyqtSignal(dict)
     closed = pyqtSignal()   # cancelled without changes (only used when closable=True)
+
+    _OW, _OH = 460, 660  # wide/tall enough for the language + voice dropdowns
 
     def __init__(self, parent=None, initial: dict | None = None, closable: bool = False):
         super().__init__(parent)
@@ -1214,6 +1216,28 @@ class OnboardingOverlay(QWidget):
                 QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
             """)
             return field
+
+        def _combo_field() -> QComboBox:
+            combo = QComboBox()
+            combo.setFont(QFont("Courier New", 10))
+            combo.setFixedHeight(32)
+            combo.setCursor(Qt.CursorShape.PointingHandCursor)
+            combo.setStyleSheet(f"""
+                QComboBox {{
+                    background: #000d12; color: {C.TEXT};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
+                }}
+                QComboBox:focus {{ border: 1px solid {C.PRI}; }}
+                QComboBox::drop-down {{ border: none; width: 22px; }}
+                QComboBox QAbstractItemView {{
+                    background: #000d12; color: {C.TEXT};
+                    border: 1px solid {C.BORDER_B};
+                    selection-background-color: {C.PRI_GHO};
+                    selection-color: {C.PRI};
+                    outline: none;
+                }}
+            """)
+            return combo
 
         layout.addWidget(_lbl("◈  PREFERENCES" if closable else "◈  PERSONALISE J.A.R.V.I.S.", 13, True))
         layout.addWidget(_lbl("Choose what Jarvis does when it starts up.", 9, color=C.PRI_DIM))
@@ -1267,6 +1291,36 @@ class OnboardingOverlay(QWidget):
 
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
+        layout.addSpacing(4)
+
+        # ── Preferred language ──────────────────────────────────────────────
+        layout.addWidget(_lbl("PREFERRED LANGUAGE", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        self._lang_combo = _combo_field()
+        from core.languages import SUPPORTED_LANGUAGES
+        init_lang = initial.get("language", "auto")
+        for code, name, _locale in SUPPORTED_LANGUAGES:
+            self._lang_combo.addItem(name, userData=code)
+        idx = self._lang_combo.findData(init_lang)
+        self._lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        layout.addWidget(self._lang_combo)
+        layout.addSpacing(8)
+
+        # ── Voice ─────────────────────────────────────────────────────────────
+        layout.addWidget(_lbl("VOICE", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        self._voice_combo = _combo_field()
+        from core.voices import SUPPORTED_VOICES, DEFAULT_VOICE
+        init_voice = initial.get("voice", DEFAULT_VOICE)
+        for name, style in SUPPORTED_VOICES:
+            self._voice_combo.addItem(f"{name}  —  {style}", userData=name)
+        idx = self._voice_combo.findData(init_voice)
+        self._voice_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        layout.addWidget(self._voice_combo)
+        layout.addSpacing(8)
+
+        sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.HLine)
+        sep3.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep3)
         layout.addSpacing(4)
 
         # ── Followed topics ──────────────────────────────────────────────────
@@ -1340,17 +1394,22 @@ class OnboardingOverlay(QWidget):
             "startup_weather": self._sel_weather,
             "weather_city":    self._city_input.text().strip() if self._sel_weather else "",
             "followed_topics": topics,
+            "language":        self._lang_combo.currentData(),
+            "voice":           self._voice_combo.currentData(),
         }
 
     def _submit(self):
         self.done.emit(self._collect())
 
     def _skip(self):
+        from core.voices import DEFAULT_VOICE
         self.done.emit({
             "startup_news":    True,
             "startup_weather": False,
             "weather_city":    "",
             "followed_topics": [],
+            "language":        "auto",
+            "voice":           DEFAULT_VOICE,
         })
 
     def _cancel(self):
@@ -2685,7 +2744,7 @@ class MainWindow(QMainWindow):
             ov.done.connect(self._on_setup_done)
         else:
             ov = OnboardingOverlay(self.centralWidget())
-            ow, oh = 460, 560
+            ow, oh = OnboardingOverlay._OW, OnboardingOverlay._OH
             ov.done.connect(self._on_onboarding_done)
 
         cw = self.centralWidget()
@@ -2701,7 +2760,7 @@ class MainWindow(QMainWindow):
         self._close_overlay()
         ov = OnboardingOverlay(self.centralWidget())
         cw = self.centralWidget()
-        ow, oh = 460, 560
+        ow, oh = OnboardingOverlay._OW, OnboardingOverlay._OH
         ov.setGeometry(
             (cw.width()  - ow) // 2,
             (cw.height() - oh) // 2,
@@ -2717,7 +2776,7 @@ class MainWindow(QMainWindow):
         self._close_overlay()
         ov = OnboardingOverlay(self.centralWidget(), initial=load_preferences(), closable=True)
         cw = self.centralWidget()
-        ow, oh = 460, 560
+        ow, oh = OnboardingOverlay._OW, OnboardingOverlay._OH
         ov.setGeometry(
             (cw.width()  - ow) // 2,
             (cw.height() - oh) // 2,

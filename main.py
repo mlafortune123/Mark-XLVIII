@@ -31,6 +31,8 @@ from memory.config_manager import get_gemini_key, get_openai_key, get_anthropic_
 from memory.preferences_manager import load_preferences, save_preferences
 from core.cloud_llm import get_provider
 from core.live_voice import LiveVoiceSession, GeminiLiveSession, OpenAIRealtimeSession
+from core.languages import language_name, language_locale
+from core.voices import DEFAULT_VOICE
 
 from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
@@ -565,6 +567,12 @@ class JarvisLive:
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
+    def _preferred_language(self) -> str | None:
+        """Display name of the user's locked response language, or None if
+        they've left it on auto-detect."""
+        code = load_preferences().get("language", "auto")
+        return language_name(code) if code != "auto" else None
+
     def _build_system_prompt(self) -> str:
         memory     = load_memory()
         mem_str    = format_memory_for_prompt(memory)
@@ -582,6 +590,17 @@ class JarvisLive:
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
+
+        lang = self._preferred_language()
+        if lang:
+            parts.append(
+                f"\n[LANGUAGE OVERRIDE]\n"
+                f"The user has explicitly locked your response language to {lang} in "
+                f"settings. Always respond in {lang}, regardless of what language the "
+                f"user speaks or any per-turn language-detection instructions above. "
+                f"Do not re-detect or switch languages, and do not call save_memory to "
+                f"update identity.language while this is active."
+            )
         return "\n".join(parts)
 
     async def _dispatch_tool(self, name: str, args: dict) -> str:
@@ -826,7 +845,7 @@ class JarvisLive:
             e = identity.get(k, {})
             return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
 
-        lang = _val("language")
+        lang = self._preferred_language() or _val("language")
         name = _val("name")
 
         from datetime import datetime
@@ -979,10 +998,12 @@ class JarvisLive:
                     and not self._voice_session.is_speaking()
                 )
                 if ready:
-                    memory   = load_memory()
-                    identity = memory.get("identity", {})
-                    lang_e   = identity.get("language", {})
-                    lang     = (lang_e.get("value", "") if isinstance(lang_e, dict) else str(lang_e)).strip()
+                    memory     = load_memory()
+                    identity   = memory.get("identity", {})
+                    lang_e     = identity.get("language", {})
+                    lang_code  = prefs.get("language", "auto")
+                    lang       = (language_name(lang_code) if lang_code != "auto" else "") or \
+                                 (lang_e.get("value", "") if isinstance(lang_e, dict) else str(lang_e)).strip()
                     lang_str = f" Respond in {lang}." if lang else ""
 
                     topic_list = ", ".join(topics)
@@ -1098,6 +1119,7 @@ class JarvisLive:
                 self._vision_busy          = False
                 self._vision_last_time     = 0.0
 
+                voice_prefs = load_preferences()
                 common_kwargs = dict(
                     system_prompt=system_prompt,
                     tool_declarations=TOOL_DECLARATIONS,
@@ -1106,6 +1128,8 @@ class JarvisLive:
                     on_assistant_transcript=self._handle_assistant_transcript,
                     on_turn_complete=self._handle_turn_complete,
                     is_muted=lambda: self.ui.muted,
+                    language_code=language_locale(voice_prefs.get("language", "auto")),
+                    voice_name=voice_prefs.get("voice", DEFAULT_VOICE),
                 )
 
                 if voice_provider == "openai":

@@ -12,6 +12,8 @@ DEFAULT_PREFS = {
     "weather_city":     "",
     "followed_topics":  [],
     "topic_digest_last": "",
+    "language":         "auto",
+    "voice":            "Charon",
 }
 
 

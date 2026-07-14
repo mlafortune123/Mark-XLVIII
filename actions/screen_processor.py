@@ -263,6 +263,10 @@ class _VisionSession:
             api_key=_get_api_key(),
             http_options={"api_version": "v1beta"},
         )
+        from core.voices import DEFAULT_VOICE
+        from memory.preferences_manager import load_preferences
+        voice_name = load_preferences().get("voice", DEFAULT_VOICE)
+
         config = gtypes.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
@@ -270,7 +274,7 @@ class _VisionSession:
             speech_config=gtypes.SpeechConfig(
                 voice_config=gtypes.VoiceConfig(
                     prebuilt_voice_config=gtypes.PrebuiltVoiceConfig(
-                        voice_name="Charon"
+                        voice_name=voice_name
                     )
                 )
             ),

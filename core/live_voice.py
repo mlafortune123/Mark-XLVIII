@@ -97,9 +97,20 @@ class LiveVoiceSession(ABC):
         on_connected: VoidCallback | None = None,
         on_turn_complete: Callable[[], Awaitable[None]] | None = None,
         is_muted: Callable[[], bool] | None = None,
+        language_code: str | None = None,
+        voice_name: str | None = None,
     ):
         self.api_key             = api_key
         self.system_prompt       = system_prompt
+        # BCP-47 locale (e.g. "tr-TR") to pin the voice's output language to,
+        # or None for auto-detect. Currently only consumed by GeminiLiveSession
+        # (Gemini's SpeechConfig.language_code) — OpenAI's Realtime API has no
+        # equivalent field, so it relies on the system_prompt-level override.
+        self.language_code       = language_code
+        # Gemini prebuilt voice name (e.g. "Charon"). Only consumed by
+        # GeminiLiveSession — OpenAI's Realtime API has its own separate voice
+        # roster and isn't wired to this preference.
+        self.voice_name          = voice_name
         self.tool_declarations   = tool_declarations
         self.tool_dispatch       = tool_dispatch
         self.send_sample_rate    = send_sample_rate
@@ -174,6 +185,7 @@ class GeminiLiveSession(LiveVoiceSession):
 
     def _build_config(self):
         from google.genai import types
+        from core.voices import DEFAULT_VOICE
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
@@ -184,8 +196,11 @@ class GeminiLiveSession(LiveVoiceSession):
             session_resumption=types.SessionResumptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Charon")
-                )
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=self.voice_name or DEFAULT_VOICE
+                    )
+                ),
+                language_code=self.language_code,
             ),
         )
 
