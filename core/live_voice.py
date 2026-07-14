@@ -281,6 +281,8 @@ class GeminiLiveSession(LiveVoiceSession):
                 await asyncio.sleep(0.1)
 
     async def _receive_audio(self):
+        from google.genai import types
+
         out_buf, in_buf = [], []
 
         while True:
