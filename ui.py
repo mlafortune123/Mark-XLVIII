@@ -1156,9 +1156,10 @@ class SetupOverlay(QWidget):
 class OnboardingOverlay(QWidget):
     # Emits a single dict: {"startup_news": bool, "startup_weather": bool,
     # "weather_city": str, "followed_topics": list[str]}
-    done = pyqtSignal(dict)
+    done   = pyqtSignal(dict)
+    closed = pyqtSignal()   # cancelled without changes (only used when closable=True)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial: dict | None = None, closable: bool = False):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
@@ -1169,8 +1170,12 @@ class OnboardingOverlay(QWidget):
             }}
         """)
 
-        self._sel_news    = True
-        self._sel_weather = False
+        initial = initial or {}
+        self._closable     = closable
+        self._sel_news     = initial.get("startup_news", True)
+        self._sel_weather  = initial.get("startup_weather", False)
+        self._init_city    = initial.get("weather_city", "")
+        self._init_topics  = ", ".join(initial.get("followed_topics", []))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 22, 30, 22)
@@ -1200,7 +1205,7 @@ class OnboardingOverlay(QWidget):
             """)
             return field
 
-        layout.addWidget(_lbl("◈  PERSONALISE J.A.R.V.I.S.", 13, True))
+        layout.addWidget(_lbl("◈  PREFERENCES" if closable else "◈  PERSONALISE J.A.R.V.I.S.", 13, True))
         layout.addWidget(_lbl("Choose what Jarvis does when it starts up.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
@@ -1242,6 +1247,7 @@ class OnboardingOverlay(QWidget):
 
         self._city_label = _lbl("CITY", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft)
         self._city_input = _text_field("e.g. New York")
+        self._city_input.setText(self._init_city)
         layout.addWidget(self._city_label)
         layout.addWidget(self._city_input)
         layout.addSpacing(8)
@@ -1257,6 +1263,7 @@ class OnboardingOverlay(QWidget):
         layout.addWidget(_lbl("TOPICS TO FOLLOW (optional)", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._topics_input = _text_field("e.g. F1, AI research, Bitcoin")
+        self._topics_input.setText(self._init_topics)
         layout.addWidget(self._topics_input)
         layout.addSpacing(12)
 
@@ -1276,7 +1283,7 @@ class OnboardingOverlay(QWidget):
         start_btn.clicked.connect(self._submit)
         layout.addWidget(start_btn)
 
-        skip_btn = QPushButton("Skip for now")
+        skip_btn = QPushButton("Cancel" if closable else "Skip for now")
         skip_btn.setFont(QFont("Courier New", 8))
         skip_btn.setFlat(True)
         skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1284,7 +1291,7 @@ class OnboardingOverlay(QWidget):
             QPushButton {{ background: transparent; color: {C.TEXT_DIM}; border: none; }}
             QPushButton:hover {{ color: {C.TEXT}; }}
         """)
-        skip_btn.clicked.connect(self._skip)
+        skip_btn.clicked.connect(self._cancel if closable else self._skip)
         layout.addWidget(skip_btn)
 
     def _toggle_style(self, btns: dict, selected):
@@ -1335,6 +1342,9 @@ class OnboardingOverlay(QWidget):
             "weather_city":    "",
             "followed_topics": [],
         })
+
+    def _cancel(self):
+        self.closed.emit()
 
 
 class RemoteKeyOverlay(QWidget):
@@ -1577,7 +1587,7 @@ class MainWindow(QMainWindow):
     def __init__(self, face_path: str):
         super().__init__()
         self._face_path = face_path
-        self.setWindowTitle("J.A.R.V.I.S — MARK XLVIII")
+        self.setWindowTitle("J.A.R.V.I.S V1")
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
 
@@ -2147,7 +2157,23 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_badge("MARK XLVIII", C.PRI_DIM))
+        lay.addWidget(_badge("STARK INDUSTRIES", C.PRI_DIM))
+
+        prefs_btn = QPushButton("⚙")
+        prefs_btn.setFixedSize(24, 24)
+        prefs_btn.setFont(QFont("Courier New", 11))
+        prefs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        prefs_btn.setToolTip("Preferences")
+        prefs_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {C.TEXT_DIM}; background: transparent;
+                border: none; border-radius: 3px;
+            }}
+            QPushButton:hover {{ color: {C.PRI}; background: {C.PRI_GHO}; }}
+        """)
+        prefs_btn.clicked.connect(self._show_preferences)
+        lay.addWidget(prefs_btn)
+
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
@@ -2519,7 +2545,7 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
         lay.addStretch()
-        lay.addWidget(_fl("FatihMakes Industries  ·  MARK XLVIII  ·  CLASSIFIED"))
+        lay.addWidget(_fl("Tech In A Tux Inc  ·  J.A.R.V.I.S  ·  Confidential"))
         lay.addStretch()
         lay.addWidget(_fl("© STARK INDUSTRIES", C.PRI_DIM))
         return w
@@ -2674,6 +2700,29 @@ class MainWindow(QMainWindow):
         ov.done.connect(self._on_onboarding_done)
         ov.show()
         self._overlay = ov
+
+    def _show_preferences(self):
+        from memory.preferences_manager import load_preferences
+
+        self._close_overlay()
+        ov = OnboardingOverlay(self.centralWidget(), initial=load_preferences(), closable=True)
+        cw = self.centralWidget()
+        ow, oh = 460, 560
+        ov.setGeometry(
+            (cw.width()  - ow) // 2,
+            (cw.height() - oh) // 2,
+            ow, oh,
+        )
+        ov.done.connect(self._on_preferences_saved)
+        ov.closed.connect(self._close_overlay)
+        ov.show()
+        self._overlay = ov
+
+    def _on_preferences_saved(self, result: dict):
+        from memory.preferences_manager import save_preferences
+        save_preferences(result)
+        self._close_overlay()
+        self._log.append_log("SYS: Preferences updated.")
 
     def _on_setup_done(self, result: dict):
         from memory.config_manager import save_api_key, save_ai_provider

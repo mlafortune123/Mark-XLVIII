@@ -91,6 +91,11 @@ def install_for_config(config: dict, log: Callable | None = None) -> None:
     Blocking — always call from a background thread.
     Progress is reported via the optional *log* callback (receives a str).
     """
+    if getattr(sys, "frozen", False):
+        if log:
+            log("SYS: Packaged build — dependencies are already bundled, skipping install.")
+        return
+
     stt = config.get("stt_engine", "whisper").lower()
     tts = config.get("tts_engine", "edgetts").lower()
 

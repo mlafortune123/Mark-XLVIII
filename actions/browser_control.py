@@ -11,13 +11,20 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from playwright.async_api import (
-    async_playwright,
-    BrowserContext,
-    Page,
-    Playwright,
-    TimeoutError as PlaywrightTimeout,
-)
+try:
+    from playwright.async_api import (
+        async_playwright,
+        BrowserContext,
+        Page,
+        Playwright,
+        TimeoutError as PlaywrightTimeout,
+    )
+    _PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    async_playwright = BrowserContext = Page = Playwright = None
+    PlaywrightTimeout = Exception
+    _PLAYWRIGHT_AVAILABLE = False
+
 _OS = platform.system()   # "Windows" | "Darwin" | "Linux"
 
 def _normalize_url(url: str) -> str:
@@ -807,6 +814,11 @@ def browser_control(
     player=None,
     session_memory=None,
 ) -> str:
+    if not _PLAYWRIGHT_AVAILABLE:
+        result = "Browser control is not available in this build."
+        _log(player, result)
+        return result
+
     params  = parameters or {}
     action  = params.get("action", "").lower().strip()
     browser = params.get("browser", "").lower().strip() or None
