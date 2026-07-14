@@ -17,6 +17,7 @@ Supports two backends — selected via  "llm_provider"  in config/api_keys.json:
         supports function/tool calls (e.g. Qwen2.5, Llama-3.1, Mistral).
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -32,6 +33,9 @@ _SENT_END = re.compile(r'(?<=[.!?])\s+|(?<=\n)\s*\n')
 
 def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "MarkXLVIII"
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
 

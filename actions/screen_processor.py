@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import re
 import sys
 import threading
@@ -38,6 +39,9 @@ from google.genai import types as gtypes
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "MarkXLVIII"
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
 

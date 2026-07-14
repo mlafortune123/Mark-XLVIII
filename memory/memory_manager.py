@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime
 from threading import Lock
 from pathlib import Path
@@ -7,6 +8,11 @@ import sys
 
 def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
+        # Packaged installs commonly live under Program Files, which standard
+        # users can't write to — keep user data in the per-user app data dir.
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "MarkXLVIII"
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
 

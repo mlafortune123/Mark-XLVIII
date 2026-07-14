@@ -38,8 +38,18 @@ def _base_dir() -> Path:
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent
 
+def _user_data_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        # Packaged installs commonly live under Program Files, which standard
+        # users can't write to — keep user data in the per-user app data dir.
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "MarkXLVIII"
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent
+
 BASE_DIR   = _base_dir()
-CONFIG_DIR = BASE_DIR / "config"
+CONFIG_DIR = _user_data_dir() / "config"
 API_FILE   = CONFIG_DIR / "api_keys.json"
 
 _DEFAULT_W, _DEFAULT_H = 980, 700

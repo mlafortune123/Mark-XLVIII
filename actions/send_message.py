@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import time
@@ -20,6 +21,9 @@ except ImportError:
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "MarkXLVIII"
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
 

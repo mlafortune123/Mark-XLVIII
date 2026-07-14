@@ -22,3 +22,8 @@ config/certs/
 
 # macOS
 .DS_Store
+
+# PyInstaller / Inno Setup build output
+build/
+dist/
+installer_output/
