@@ -1,7 +1,7 @@
-# PyInstaller spec for MARK XLVIII on macOS — build with:
+# PyInstaller spec for JARVIS on macOS — build with:
 #   pyinstaller mark48-mac.spec
 #
-# Produces dist/MarkXLVIII.app, ready to be wrapped in a .dmg (see
+# Produces dist/JARVIS.app, ready to be wrapped in a .dmg (see
 # scripts/build_dmg.sh). Must be run on macOS.
 
 # -*- mode: python ; coding: utf-8 -*-
@@ -49,7 +49,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='MarkXLVIII',
+    name='JARVIS',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -64,14 +64,14 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='MarkXLVIII',
+    name='JARVIS',
 )
 
 app = BUNDLE(
     coll,
-    name='MarkXLVIII.app',
+    name='JARVIS.app',
     icon='config/jarvis.icns',
-    bundle_identifier='com.fatihmakes.markxlviii',
+    bundle_identifier='com.fatihmakes.jarvis',
     info_plist={
         'CFBundleShortVersionString': '48.0.0',
         'NSMicrophoneUsageDescription':

@@ -35,9 +35,9 @@ def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         appdata = os.environ.get("APPDATA")
         if appdata:
-            return Path(appdata) / "MarkXLVIII"
+            return Path(appdata) / "JARVIS"
         if sys.platform == "darwin":
-            return Path.home() / "Library" / "Application Support" / "MarkXLVIII"
+            return Path.home() / "Library" / "Application Support" / "JARVIS"
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
 

@@ -1,8 +1,8 @@
-# PyInstaller spec for MARK XLVIII — build with:
+# PyInstaller spec for JARVIS — build with:
 #   pyinstaller mark48.spec
 #
 # Must be run on Windows (PyInstaller does not cross-compile).
-# Produces a onedir build in dist/MarkXLVIII/ ready to be wrapped by installer.iss.
+# Produces a onedir build in dist/JARVIS/ ready to be wrapped by installer.iss.
 
 # -*- mode: python ; coding: utf-8 -*-
 
@@ -57,7 +57,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='MarkXLVIII',
+    name='JARVIS',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -73,9 +73,9 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='MarkXLVIII',
-    # Keep bundled files flat next to the exe (dist/MarkXLVIII/core/...,
-    # dist/MarkXLVIII/config/...) instead of PyInstaller 6's default
+    name='JARVIS',
+    # Keep bundled files flat next to the exe (dist/JARVIS/core/...,
+    # dist/JARVIS/config/...) instead of PyInstaller 6's default
     # _internal/ subfolder — the app's own path resolution
     # (Path(sys.executable).parent / "core" / "prompt.txt", etc.) assumes
     # a flat layout.
