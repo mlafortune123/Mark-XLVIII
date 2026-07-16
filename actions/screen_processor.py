@@ -288,11 +288,26 @@ class _VisionSession:
             delivery_fragments.append(f"at {pace_instruction(pace_code)}")
         if accent_code != DEFAULT_ACCENT:
             delivery_fragments.append(f"with {accent_instruction(accent_code)}")
+        delivery_directive = None
         if delivery_fragments:
             delivery = ", ".join(delivery_fragments)
             system_instruction += (
                 f"\n\n[DELIVERY OVERRIDE]\nThe user has explicitly configured your "
                 f"spoken delivery in settings: speak {delivery}."
+            )
+            # The system_instruction block above is not reliably honored by
+            # gemini-3.1-flash-live-preview (see core/live_voice.py's
+            # GeminiLiveSession — same gap, confirmed empirically: this model
+            # has no documented system_instruction-level accent/style
+            # control, unlike the one-shot TTS endpoint). Directly telling
+            # the model mid-conversation does work, so also send it as an
+            # actual turn once connected, below.
+            delivery_directive = (
+                f"Please speak {delivery}, starting with your very next "
+                f"reply, and keep it consistent for the rest of this "
+                f"conversation regardless of your assigned voice's natural "
+                f"characteristics. Just start speaking that way — no need "
+                f"to acknowledge this instruction out loud."
             )
 
         config = gtypes.LiveConnectConfig(
@@ -324,8 +339,14 @@ class _VisionSession:
                 ) as session:
                     self._session = session
                     self._ready_evt.set()
-                    backoff = 2.0  
+                    backoff = 2.0
                     print("[Vision] ✅ Connected")
+
+                    if delivery_directive:
+                        await session.send_client_content(
+                            turns={"role": "user", "parts": [{"text": delivery_directive}]},
+                            turn_complete=True,
+                        )
 
                     async with asyncio.TaskGroup() as tg:
                         tg.create_task(self._send_loop())

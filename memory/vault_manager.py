@@ -42,9 +42,9 @@ DEFAULT_SETTINGS = {
     "followed_topics":   [],
     "topic_digest_last": "",
     "language":          "auto",
-    "voice":             "Charon",
-    "accent":            "default",
-    "style":             "default",
+    "voice":             "Sadaltager",
+    "accent":            "british",
+    "style":             "newscaster",
     "pace":              "default",
 }
 
@@ -232,6 +232,70 @@ def set_followed_topics(names) -> None:
             _write_note(path, fm, body)
 
 
+def follow_topic(name: str) -> str:
+    """Conversational entry point for "keep me posted on X" — dedups
+    case-insensitively against the existing list (compares slugs, not raw
+    strings, so "SpaceX" and "spacex" don't both get added)."""
+    name = (name or "").strip()
+    if not name:
+        return "Please give me a topic to follow."
+
+    current = list_followed_topics()
+    slug = _slugify(name)
+    if any(_slugify(t) == slug for t in current):
+        return f"Already following {name}."
+
+    set_followed_topics(current + [name])
+    return f"Now following {name}."
+
+
+def unfollow_topic(name: str) -> str:
+    """Matches by slug or display name — removal just strips the
+    'followed' tag (via set_followed_topics), it never deletes the note."""
+    name = (name or "").strip()
+    if not name:
+        return "Please tell me which topic to stop following."
+
+    slug = _slugify(name)
+    current = list_followed_topics()
+    remaining = [t for t in current if _slugify(t) != slug]
+
+    if len(remaining) == len(current):
+        return f"I wasn't following {name}."
+
+    set_followed_topics(remaining)
+    return f"Stopped following {name}."
+
+
+MAX_DIGEST_HISTORY = 14
+
+
+def append_digest_history(topic: str, summary: str, date_str: str | None = None) -> None:
+    """Records what was reported for a followed topic's digest, on
+    Topics/<slug>.md's machine-owned frontmatter (body stays user-owned).
+    Capped rolling window so slow-moving topics don't repeat the same
+    update every day — _run_topic_digest() feeds this back in as
+    "previously reported" context on the next run."""
+    summary = (summary or "").strip()
+    if not summary:
+        return
+    slug = _slugify(topic)
+    path = get_vault_path() / "Topics" / f"{slug}.md"
+    fm, body = _read_note(path)
+    history = fm.get("digest_history") or []
+    history.append({"date": date_str or _today(), "summary": summary})
+    fm["digest_history"] = history[-MAX_DIGEST_HISTORY:]
+    _write_note(path, fm, body)
+
+
+def get_digest_history(topic: str, n: int = 5) -> list[dict]:
+    slug = _slugify(topic)
+    path = get_vault_path() / "Topics" / f"{slug}.md"
+    fm, _ = _read_note(path)
+    history = fm.get("digest_history") or []
+    return history[-n:]
+
+
 # ── Core prompt injection (replaces format_memory_for_prompt) ───────────────
 
 def build_core_prompt_block() -> str:
@@ -284,6 +348,19 @@ def get_identity_field(key: str) -> str:
     entry = fields.get(key)
     val = entry.get("value") if isinstance(entry, dict) else entry
     return str(val or "").strip()
+
+
+def sync_city_from_weather_if_needed() -> None:
+    """One-time nicety: if Identity has no city yet but the Preferences UI's
+    weather_city is set, copy it into Identity so core.user_context's
+    Identity-wins resolution picks it up without the user having to say
+    their city conversationally. Idempotent — no-ops once Identity has a
+    city. Does not delete weather_city; the Preferences UI still owns it."""
+    if get_identity_field("city"):
+        return
+    weather_city = (get_settings().get("weather_city") or "").strip()
+    if weather_city:
+        save_fact("identity", "city", weather_city)
 
 
 # ── Facts (replaces remember()/update_memory() and forget()) ────────────────
@@ -368,12 +445,16 @@ def search_memory(query: str, category: str = "any", top_k: int = 5) -> str:
             continue
         for path in folder.glob("*.md"):
             fm, body = _read_note(path)
+            digest_summaries = " ".join(
+                entry.get("summary", "") for entry in (fm.get("digest_history") or [])
+            )
             haystack = " ".join([
                 path.stem,
                 str(fm.get("key", "")),
                 str(fm.get("value", "")),
                 " ".join(fm.get("tags") or []),
                 body,
+                digest_summaries,
             ]).lower()
             score = sum(haystack.count(t) for t in terms)
             if score > 0:

@@ -49,3 +49,32 @@ def _log(message: str, player=None) -> None:
             player.write_log(f"JARVIS: {message}")
         except Exception:
             pass
+
+
+# ── Registry-native tool spec ───────────────────────────────────────────────
+
+from core.tool_registry import ToolSpec
+
+
+def _handle(args: dict, ctx) -> str:
+    r = weather_action(parameters=args, player=ctx.ui)
+    return r or "Weather delivered."
+
+
+TOOLS = [
+    ToolSpec(
+        name="weather_report",
+        declaration={
+            "name": "weather_report",
+            "description": "Gives the weather report to user",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "city": {"type": "STRING", "description": "City name"}
+                },
+                "required": ["city"]
+            }
+        },
+        handler=_handle,
+    )
+]

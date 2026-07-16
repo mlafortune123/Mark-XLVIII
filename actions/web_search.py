@@ -1,266 +1,140 @@
 #web_search.py
-from datetime import datetime
-
-from core.cloud_llm import get_provider
-from memory.config_manager import get_gemini_key
+from core.search_provider import backend_chain, DDGBackend, GeminiGroundedBackend, SearchResult, Source
+from core.user_context import get_user_context
 
 
-def _recency_instruction() -> str:
-    """System instruction anchoring grounded search calls to the real
-    wall-clock date. Without this, google_search grounding still fetches
-    live results, but the model's own synthesis of them isn't told today's
-    actual date or that it should trust live grounding over its (older)
-    training data — leading to stale-feeling answers even when the
-    underlying search results were current. Apply this to every one-shot
-    Gemini call that uses google_search grounding — see claude.md's
-    "Search recency" gotcha before adding a new one without it."""
-    now = datetime.now()
-    return (
-        f"Today's real date is {now.strftime('%A, %B %d, %Y')}. This is "
-        "ground truth — your training data has an earlier cutoff and may be "
-        "stale or wrong about anything time-sensitive. Trust the search "
-        "results over your own memorized knowledge. Prioritize the most "
-        "recent, currently relevant information; if results conflict or "
-        "include older material, prefer the newer one and say so if it "
-        "matters. Never present outdated information as current."
-    )
+def _format_sources(sources: list[Source]) -> str:
+    if not sources:
+        return ""
+    lines = ["\nSources:"]
+    for i, s in enumerate(sources, 1):
+        lines.append(f"{i}. {s.title} ({s.url})")
+    return "\n".join(lines)
 
 
-def _gemini_search(query: str) -> str:
-    # Gemini's built-in google_search grounding tool is Gemini-specific — for
-    # any other provider, raise immediately so callers fall through to their
-    # existing DDG-fallback path.
-    if get_provider() != "gemini":
-        raise RuntimeError("Native web search requires the Gemini provider.")
-
-    from google import genai
-
-    client   = genai.Client(api_key=get_gemini_key())
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=query,
-        config={
-            "tools": [{"google_search": {}}],
-            "system_instruction": _recency_instruction(),
-        },
-    )
-
-    text = ""
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            text += part.text
-
-    text = text.strip()
-    if not text:
-        raise ValueError("Gemini returned an empty response.")
-    return text
+def _format_result(result: SearchResult) -> str:
+    if not result.text:
+        return ""
+    return result.text + _format_sources(result.sources)
 
 
-def _ddg_search(query: str, max_results: int = 6) -> list[dict]:
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        from duckduckgo_search import DDGS
+def _run_chain(query: str, *, extra_instruction: str = "", ddg_query: str | None = None,
+               empty_message: str | None = None) -> str:
+    """Walks backend_chain() in order, returning the first non-empty
+    formatted result. This is what Part 1B's "modes become thin" collapses
+    every mode down to — the enrichment (query text, extra_instruction) is
+    the only per-mode logic left.
 
-    results = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(query, max_results=max_results):
-            results.append({
-                "title":   r.get("title",  ""),
-                "snippet": r.get("body",   ""),
-                "url":     r.get("href",   ""),
-            })
-    return results
-
-
-def _ddg_news(query: str, max_results: int = 8) -> list[dict]:
-    """DDG news search — returns actual articles, not website homepages."""
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        from duckduckgo_search import DDGS
-
-    results = []
-    try:
-        with DDGS() as ddgs:
-            for r in ddgs.news(query, max_results=max_results):
-                results.append({
-                    "title":   r.get("title",  ""),
-                    "snippet": r.get("body",   ""),
-                    "url":     r.get("url",    ""),
-                    "source":  r.get("source", ""),
-                })
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ DDG news() failed ({e}) — falling back to text search")
-        results = _ddg_search(query, max_results=max_results)
-    return results
-
-
-def _format_ddg(query: str, results: list[dict]) -> str:
-    if not results:
-        return f"No results found for: {query}"
-
-    lines = [f"Search results for: {query}\n"]
-    for i, r in enumerate(results, 1):
-        if r.get("title"):   lines.append(f"{i}. {r['title']}")
-        if r.get("snippet"): lines.append(f"   {r['snippet']}")
-        if r.get("url"):     lines.append(f"   Source: {r['url']}")
-        lines.append("")
-    return "\n".join(lines).strip()
-
-
-def _format_news(query: str, results: list[dict]) -> str:
-    if not results:
-        return f"No news found for: {query}"
-
-    lines = [f"Latest news: {query}\n"]
-    for i, r in enumerate(results, 1):
-        title = r.get("title", "")
-        if not title:
-            continue
-        src = f"  [{r['source']}]" if r.get("source") else ""
-        lines.append(f"{i}. {title}{src}")
-        if r.get("snippet"):
-            lines.append(f"   {r['snippet'][:140]}")
-        if r.get("url"):
-            lines.append(f"   {r['url']}")
-        lines.append("")
-    return "\n".join(lines).strip()
-
-
-# ── Briefing helper ────────────────────────────────────────────────────────────
-
-def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
-    """
-    Fetches current headlines via Gemini grounded search.
-    Optimised for speed: minimal prompt + strict token cap.
-    Returns (headline_list, raw_text_for_display).
-    """
-    import re
-
-    if get_provider() != "gemini":
-        raise RuntimeError("Native headline search requires the Gemini provider.")
-
-    from google import genai
-
-    client = genai.Client(api_key=get_gemini_key())
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=f"Current world news: {n} headlines. Numbered list, titles only.",
-        config={
-            "tools": [{"google_search": {}}],
-            "system_instruction": _recency_instruction(),
-        },
-    )
-
-    raw = ""
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            raw += part.text
-
-    headlines = []
-    for line in raw.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        # Only accept lines that begin with a number — skips preamble/closing sentences
-        if not re.match(r'^[\d]+[.\)\-]', line):
-            continue
-        clean = re.sub(r'^[\d]+[.\)\-]\s*', '', line)
-        clean = re.sub(r'^\*+\s*',          '', clean).strip()
-        if clean and len(clean) > 10:
-            headlines.append(clean)
-
-    return headlines[:n], raw.strip()
+    `ddg_query` is the keyword-style form for DDG — the LLM-prose `query`
+    ("Comprehensive, detailed explanation of: …") makes a poor keyword
+    search, so modes that enrich the prose query should pass the plain one
+    here too."""
+    for backend in backend_chain():
+        try:
+            if isinstance(backend, DDGBackend):
+                result = backend.search(ddg_query or query)
+            else:
+                result = backend.search(query, extra_instruction=extra_instruction)
+            if result.text:
+                return _format_result(result)
+        except Exception as e:
+            print(f"[WebSearch] ⚠️ {backend.name} failed ({e})")
+    return empty_message or f"No results found for: {ddg_query or query}"
 
 
 # ── Modes ──────────────────────────────────────────────────────────────────────
 
 def _search(query: str) -> str:
     """Default search — Gemini grounded, DDG fallback."""
-    try:
-        return _gemini_search(query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Gemini failed ({e}) — trying DDG...")
-        results = _ddg_search(query)
-        return _format_ddg(query, results)
+    return _run_chain(query)
 
 
 def _news(query: str) -> str:
     """
-    Runs Gemini grounded search AND DDG news in parallel.
-    Returns whichever delivers a valid result first; cancels the other.
+    Primary backend with a bounded time budget; falls back to DDG news only
+    on failure or timeout, rather than racing both backends on every call.
     """
-    import threading
+    import concurrent.futures
 
     gemini_query = f"latest news today: {query}" if query else "top world news today"
     ddg_query    = query if query else "world news today"
 
-    result_box  = [None]   # first valid result lands here
-    lock        = threading.Lock()
-    done_evt    = threading.Event()
-    failures    = [0]
-
-    def _store(r: str) -> None:
-        if r and len(r) > 60:
-            with lock:
-                if result_box[0] is None:
-                    result_box[0] = r
-            done_evt.set()
+    chain = backend_chain()
+    primary = chain[0]
+    try:
+        if isinstance(primary, DDGBackend):
+            result = primary.search(ddg_query, news=True)
         else:
-            with lock:
-                failures[0] += 1
-                if failures[0] >= 2:   # both failed — unblock caller
-                    done_evt.set()
+            # No `with` block: ThreadPoolExecutor.__exit__ is shutdown(wait=True),
+            # which blocks until the search call finishes and defeats the
+            # timeout entirely. shutdown(wait=False) abandons the slow call
+            # (its thread finishes in the background) so DDG can take over now.
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = ex.submit(primary.search, gemini_query)
+            try:
+                result = future.result(timeout=8.0)
+            finally:
+                ex.shutdown(wait=False)
+        if result.text and len(result.text) > 60:
+            return _format_result(result)
+    except Exception as e:
+        print(f"[WebSearch] ⚠️ {primary.name} news failed/timed out ({e})")
 
-    def _try_gemini():
-        try:
-            _store(_gemini_search(gemini_query))
-        except Exception as e:
-            print(f"[WebSearch] ⚠️ Gemini news failed ({e})")
-            _store("")
+    try:
+        fallback = DDGBackend()
+        result = fallback.search(ddg_query, news=True, max_results=8)
+        if result.text:
+            return _format_result(result)
+    except Exception as e:
+        print(f"[WebSearch] ⚠️ DDG news fallback failed ({e})")
 
-    def _try_ddg():
-        try:
-            results = _ddg_news(ddg_query, max_results=8)
-            _store(_format_news(ddg_query, results))
-        except Exception as e:
-            print(f"[WebSearch] ⚠️ DDG news failed ({e})")
-            _store("")
-
-    threading.Thread(target=_try_gemini, daemon=True).start()
-    threading.Thread(target=_try_ddg,    daemon=True).start()
-
-    done_evt.wait(timeout=10.0)
-    return result_box[0] or f"No news found for: {query}"
+    return f"No news found for: {query}"
 
 
 def _research(query: str) -> str:
-    """
-    Deep dive — asks Gemini for a comprehensive answer with context.
-    Falls back to a wider DDG fetch.
-    """
+    """Deep dive — asks the primary backend for a comprehensive answer with
+    context; falls back down the chain."""
     research_query = (
         f"Comprehensive, detailed explanation of: {query}. "
         "Include background context, key facts, current state, and important nuances."
     )
-    try:
-        return _gemini_search(research_query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Research Gemini failed ({e}) — DDG fallback...")
-        results = _ddg_search(query, max_results=10)
-        return _format_ddg(query, results)
+    return _run_chain(research_query, ddg_query=query)
 
 
 def _price(query: str) -> str:
     """Product price lookup — searches for current market prices."""
     price_query = f"current price of {query} — how much does it cost today"
-    try:
-        return _gemini_search(price_query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Price Gemini failed ({e}) — DDG fallback...")
-        results = _ddg_search(f"{query} price buy", max_results=6)
-        return _format_ddg(query, results)
+    return _run_chain(price_query, ddg_query=f"{query} price buy")
+
+
+def _events(query: str, city: str) -> str:
+    """Local events / things-to-do — location-anchored via the resolved city."""
+    ctx = get_user_context()
+    city = (city or ctx.city or "").strip()
+    if not city:
+        return (
+            "I don't know what city to search near — ask the user where, "
+            "then call web_search again with mode='events' and a city."
+        )
+
+    events_query = f"Events in/near {city}: {query}. Include specific dates, venue names, and ticket/booking links."
+    location_instruction = (
+        f"The user is located in {city}; local time is {ctx.now.strftime('%A, %B %d, %Y %I:%M %p')}. "
+        "\"This weekend\" / \"tonight\" resolve relative to that."
+    )
+
+    for backend in backend_chain():
+        try:
+            if isinstance(backend, DDGBackend):
+                result = backend.search(f"{query} events {city} {ctx.now.strftime('%B %Y')}")
+            else:
+                result = backend.search(events_query, extra_instruction=location_instruction)
+            if result.text:
+                return _format_result(result)
+        except Exception as e:
+            print(f"[WebSearch] ⚠️ {backend.name} events failed ({e})")
+
+    return f"No events found for {city}."
 
 
 def _compare(items: list[str], aspect: str) -> str:
@@ -268,15 +142,21 @@ def _compare(items: list[str], aspect: str) -> str:
         f"Compare {', '.join(items)} in terms of {aspect}. "
         "Give specific facts and data."
     )
-    try:
-        return _gemini_search(query)
-    except Exception as e:
-        print(f"[WebSearch] ⚠️ Gemini compare failed: {e} — falling back to DDG")
+    for backend in backend_chain():
+        if isinstance(backend, DDGBackend):
+            break
+        try:
+            result = backend.search(query)
+            if result.text:
+                return _format_result(result)
+        except Exception as e:
+            print(f"[WebSearch] ⚠️ {backend.name} compare failed: {e} — falling back to DDG")
 
+    ddg = DDGBackend()
     all_results: dict[str, list] = {}
     for item in items:
         try:
-            all_results[item] = _ddg_search(f"{item} {aspect}", max_results=3)
+            all_results[item] = ddg.raw(f"{item} {aspect}", max_results=3)
         except Exception:
             all_results[item] = []
 
@@ -289,6 +169,14 @@ def _compare(items: list[str], aspect: str) -> str:
             if r.get("url"):
                 lines.append(f"    {r['url']}")
     return "\n".join(lines)
+
+
+# ── Briefing helper ────────────────────────────────────────────────────────────
+
+def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
+    """Fetches current headlines via Gemini grounded search. Kept as a thin
+    wrapper for existing callers (startup briefing)."""
+    return GeminiGroundedBackend().headlines(n)
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -304,6 +192,7 @@ def web_search(
     mode   = params.get("mode",  "search").lower().strip()
     items  = params.get("items", [])
     aspect = params.get("aspect", "general").strip() or "general"
+    city   = params.get("city", "").strip()
 
     if not query and not items:
         return "Please provide a search query."
@@ -325,8 +214,63 @@ def web_search(
             return _research(query)
         if mode == "price":
             return _price(query)
+        if mode == "events":
+            return _events(query, city)
         return _search(query)
 
     except Exception as e:
         print(f"[WebSearch] ❌ All backends failed: {e}")
         return f"Search failed: {e}"
+
+
+# ── Registry-native tool spec ───────────────────────────────────────────────
+
+from core.tool_registry import ToolSpec
+
+
+def _handle(args: dict, ctx) -> str:
+    r = web_search(parameters=args, player=ctx.ui)
+    result = r or "Done."
+    # Mirror results to the on-screen content panel
+    mode = args.get("mode", "search")
+    if r and not r.startswith("No results") and not r.startswith("Search failed"):
+        query = args.get("query") or ", ".join(args.get("items", []))
+        label = f"{mode.upper()} — {query[:38]}" if query else mode.upper()
+        ctx.ui.show_content(label, r)
+    return result
+
+
+TOOLS = [
+    ToolSpec(
+        name="web_search",
+        declaration={
+            "name": "web_search",
+            "description": (
+                "Searches the web. Use for ANY question about current facts, events, prices, "
+                "or topics — always prefer this over guessing. "
+                "Modes: 'search' (default), 'news' (latest headlines on a topic), "
+                "'research' (deep comprehensive answer), 'price' (product cost lookup), "
+                "'compare' (side-by-side comparison of items), 'events' (local events/things to do — "
+                "city auto-fills from memory if omitted)."
+            ),
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "query":  {"type": "STRING", "description": "Search query or topic"},
+                    "mode":   {"type": "STRING", "description": "search | news | research | price | compare | events"},
+                    "items":  {"type": "ARRAY",  "items": {"type": "STRING"}, "description": "Items to compare (compare mode)"},
+                    "aspect": {"type": "STRING", "description": "Comparison aspect: price | specs | reviews | features"},
+                    "city":   {"type": "STRING", "description": "City for events mode. Omit to use the user's saved city; only ask the user if none is known."},
+                },
+                "required": ["query"]
+            }
+        },
+        routing_hint=(
+            "web_search: mode='news' for current events, mode='research' for deep topics, "
+            "mode='price' for product costs, mode='events' for local events / concerts / "
+            "things to do / what's happening (city auto-fills from memory — only ask the "
+            "user if it's unknown)."
+        ),
+        handler=_handle,
+    )
+]

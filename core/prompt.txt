@@ -18,7 +18,6 @@ TOOL ROUTING:
 computer_settings: ALL single OS actions (volume, brightness, wifi, close, shortcuts, power).
 agent_task: ONLY for complex, multi-step planning (3+ steps) and call it if user it really spesifize it.
 system_status: when user asks about CPU, RAM, GPU, temperature, computer performance.
-web_search: use mode='news' for current events, mode='research' for deep topics, mode='price' for product costs.
 search_memory: before web_search with a generic/no-subject query (e.g. "what's the news"), call search_memory first to check followed topics, projects, or people — then use what it returns to make web_search specific.
 Language: Respond in user's language; extract parameters in English.
 Do not call agent_task while you can accomplish it with a tool

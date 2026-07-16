@@ -51,26 +51,34 @@ from core.voices import DEFAULT_VOICE
 from core.accents import accent_instruction, DEFAULT_ACCENT
 from core.styles import style_instruction, DEFAULT_STYLE
 from core.pace import pace_instruction, DEFAULT_PACE
+from core.user_context import get_user_context
 
 from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
-from actions.open_app          import open_app
-from actions.weather_report    import weather_action
-from actions.send_message      import send_message
-from actions.reminder          import reminder
+from actions.open_app          import TOOLS as _OPEN_APP_TOOLS
+from actions.weather_report    import TOOLS as _WEATHER_TOOLS
+from actions.send_message      import TOOLS as _SEND_MESSAGE_TOOLS
+from actions.reminder          import TOOLS as _REMINDER_TOOLS
 from actions.computer_settings import computer_settings
 from actions.screen_processor  import _capture_camera, _capture_screen
-from actions.youtube_video     import youtube_video
+from actions.youtube_video     import TOOLS as _YOUTUBE_TOOLS
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
 from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
-from actions.web_search        import web_search as web_search_action
+from actions.web_search        import TOOLS as _WEB_SEARCH_TOOLS
 from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
+from actions.topics            import TOOLS as _TOPICS_TOOLS
+from core.tool_registry        import ToolContext, REGISTRY, register, all_declarations, routing_block
+
+for _tools in (_OPEN_APP_TOOLS, _WEATHER_TOOLS, _SEND_MESSAGE_TOOLS, _REMINDER_TOOLS,
+               _YOUTUBE_TOOLS, _WEB_SEARCH_TOOLS, _TOPICS_TOOLS):
+    for _spec in _tools:
+        register(_spec)
 
 
 def get_base_dir():
@@ -98,45 +106,7 @@ def _load_system_prompt() -> str:
             "Never simulate or guess results — always call the appropriate tool."
         )
 
-TOOL_DECLARATIONS = [
-    {
-        "name": "open_app",
-        "description": (
-            "Opens any application on the computer. "
-            "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "app_name": {
-                    "type": "STRING",
-                    "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
-                }
-            },
-            "required": ["app_name"]
-        }
-    },
-    {
-        "name": "web_search",
-        "description": (
-            "Searches the web. Use for ANY question about current facts, events, prices, "
-            "or topics — always prefer this over guessing. "
-            "Modes: 'search' (default), 'news' (latest headlines on a topic), "
-            "'research' (deep comprehensive answer), 'price' (product cost lookup), "
-            "'compare' (side-by-side comparison of items)."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "query":  {"type": "STRING", "description": "Search query or topic"},
-                "mode":   {"type": "STRING", "description": "search | news | research | price | compare"},
-                "items":  {"type": "ARRAY",  "items": {"type": "STRING"}, "description": "Items to compare (compare mode)"},
-                "aspect": {"type": "STRING", "description": "Comparison aspect: price | specs | reviews | features"},
-            },
-            "required": ["query"]
-        }
-    },
+_STATIC_TOOL_DECLARATIONS = [
     {
         "name": "system_status",
         "description": (
@@ -147,61 +117,6 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {},
-        }
-    },
-    {
-        "name": "weather_report",
-        "description": "Gives the weather report to user",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "city": {"type": "STRING", "description": "City name"}
-            },
-            "required": ["city"]
-        }
-    },
-    {
-        "name": "send_message",
-        "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "receiver":     {"type": "STRING", "description": "Recipient contact name"},
-                "message_text": {"type": "STRING", "description": "The message to send"},
-                "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
-            },
-            "required": ["receiver", "message_text", "platform"]
-        }
-    },
-    {
-        "name": "reminder",
-        "description": "Sets a timed reminder using Task Scheduler.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "date":    {"type": "STRING", "description": "Date in YYYY-MM-DD format"},
-                "time":    {"type": "STRING", "description": "Time in HH:MM format (24h)"},
-                "message": {"type": "STRING", "description": "Reminder message text"}
-            },
-            "required": ["date", "time", "message"]
-        }
-    },
-    {
-        "name": "youtube_video",
-        "description": (
-            "Controls YouTube. Use for: playing videos, summarizing a video's content, "
-            "getting video info, or showing trending videos."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "play | summarize | get_info | trending (default: play)"},
-                "query":  {"type": "STRING", "description": "Search query for play action"},
-                "save":   {"type": "BOOLEAN", "description": "Save summary to Notepad (summarize only)"},
-                "region": {"type": "STRING", "description": "Country code for trending e.g. TR, US"},
-                "url":    {"type": "STRING", "description": "Video URL for get_info action"},
-            },
-            "required": []
         }
     },
     {
@@ -539,6 +454,8 @@ TOOL_DECLARATIONS = [
     },
 ]
 
+TOOL_DECLARATIONS = _STATIC_TOOL_DECLARATIONS + all_declarations()
+
 # --- Plugin system ---
 
 
@@ -554,9 +471,10 @@ class JarvisLive:
         self._vision_close_pending = False   # True after vision injected; next turn_complete closes camera
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
-        self.ui.on_text_command   = self._on_text_command
-        self.ui.on_remote_clicked = self._make_remote_key
-        self.ui.on_interrupt      = self.interrupt
+        self.ui.on_text_command    = self._on_text_command
+        self.ui.on_remote_clicked  = self._make_remote_key
+        self.ui.on_interrupt       = self.interrupt
+        self.ui.on_settings_saved  = self._on_settings_saved
         self._dashboard     = None
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
@@ -581,6 +499,26 @@ class JarvisLive:
             return
         asyncio.run_coroutine_threadsafe(
             self._voice_session.send_text(text, turn_complete=True),
+            self._loop
+        )
+
+    def _on_settings_saved(self) -> None:
+        """Called from the Qt thread when Preferences is saved. Language/
+        accent/style/pace have no structured API field on the live session
+        (see _priming_directive()) and can't be pushed by rebuilding config —
+        they only take effect as an explicit conversational turn, so
+        re-send the directive to whatever session is currently live instead
+        of reconnecting. voice_name (and language_code's structural TTS-
+        locale effect, distinct from which language it responds in) still
+        needs a reconnect (not done here) since voice is connect-time-only
+        config — see gotcha 7 in CLAUDE.md."""
+        if not self._loop or not self._voice_session:
+            return
+        directive = self._priming_directive()
+        if not directive or not isinstance(self._voice_session, GeminiLiveSession):
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._voice_session.send_text(directive, turn_complete=True),
             self._loop
         )
 
@@ -648,6 +586,12 @@ class JarvisLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
 
+        # Registry routing hints go directly after the base prompt — the
+        # [LANGUAGE OVERRIDE]/[DELIVERY OVERRIDE] blocks below must stay the
+        # last thing in the prompt (position is precedence, gotcha 4).
+        if hint_block := routing_block():
+            parts.append(f"\n{hint_block}")
+
         lang = self._preferred_language()
         if lang:
             parts.append(
@@ -678,7 +622,49 @@ class JarvisLive:
                 f"speak {delivery}. Maintain this consistently across all responses, "
                 f"regardless of the selected voice's natural default characteristics."
             )
+
         return "\n".join(parts)
+
+    def _priming_directive(self) -> str | None:
+        """Direct-command phrasing of the language/accent/style/pace
+        overrides, sent as an actual conversational turn rather than folded
+        into system_instruction. The [LANGUAGE OVERRIDE]/[DELIVERY OVERRIDE]
+        blocks in _build_system_prompt() are set once at connect time and —
+        empirically confirmed by the user for accent — are not reliably
+        honored by gemini-3.1-flash-live-preview, which has no documented
+        system_instruction-level style/accent control (unlike the one-shot
+        TTS endpoint core/voice_preview.py uses). Explicitly telling the
+        model mid-conversation ("can you talk with a British accent?") does
+        work, so this mimics that: a real user-role turn, sent once on
+        connect and again whenever a setting changes (_on_settings_saved).
+        Language is folded in here on the same reasoning even though it
+        hasn't been reported broken — the mechanism (system_instruction-only,
+        never re-sent) is identical, so it's the same latent bug."""
+        clauses = []
+        if lang := self._preferred_language():
+            clauses.append(
+                f"respond only in {lang} from now on, regardless of what "
+                f"language I speak or any per-turn language-detection "
+                f"instructions"
+            )
+        fragments = []
+        if style := self._preferred_style():
+            fragments.append(f"in {style}")
+        if pace := self._preferred_pace():
+            fragments.append(f"at {pace}")
+        if accent := self._preferred_accent():
+            fragments.append(f"with {accent}")
+        if fragments:
+            clauses.append(f"speak {', '.join(fragments)}")
+        if not clauses:
+            return None
+        return (
+            f"Please {' and '.join(clauses)}, starting with your very next "
+            f"reply, and keep it consistent for the rest of this "
+            f"conversation regardless of your assigned voice's natural "
+            f"characteristics. Just start now — no need to acknowledge this "
+            f"instruction out loud."
+        )
 
     async def _dispatch_tool(self, name: str, args: dict) -> str:
         """Provider-neutral tool dispatch — takes/returns plain values so both
@@ -711,33 +697,29 @@ class JarvisLive:
 
         result = "Done."
 
+        spec = REGISTRY.get(name)
+        if spec is not None:
+            ctx = ToolContext(ui=self.ui, speak=self.speak)
+            try:
+                if spec.blocking:
+                    result = await loop.run_in_executor(None, lambda: spec.handler(args, ctx))
+                else:
+                    result = await spec.handler(args, ctx)
+            except Exception as e:
+                result = f"Tool '{name}' failed: {e}"
+                traceback.print_exc()
+                self.speak_error(name, e)
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return str(result)
+
         try:
-            if name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Opened {args.get('app_name')}."
-
-            elif name == "weather_report":
-                r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
-
-            elif name == "browser_control":
+            if name == "browser_control":
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
-                result = r or "Done."
-
-            elif name == "send_message":
-                r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
-
-            elif name == "reminder":
-                r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Reminder set."
-
-            elif name == "youtube_video":
-                r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
                 result = r or "Done."
 
             elif name == "screen_process":
@@ -792,15 +774,6 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
 
-            elif name == "web_search":
-                r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
-                result = r or "Done."
-                # Mirror results to the on-screen content panel
-                _mode = args.get("mode", "search")
-                if r and not r.startswith("No results") and not r.startswith("Search failed"):
-                    _query = args.get("query") or ", ".join(args.get("items", []))
-                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                    self.ui.show_content(_label, r)
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
@@ -920,7 +893,7 @@ class JarvisLive:
         prefs           = vault_manager.get_settings()
         want_news       = prefs.get("startup_news", True)
         want_weather    = prefs.get("startup_weather", False)
-        weather_city    = (prefs.get("weather_city") or "").strip()
+        weather_city    = get_user_context().city or ""
 
         # ── memory ───────────────────────────────────────────────────────────
         lang = self._preferred_language() or vault_manager.get_identity_field("language")
@@ -1057,14 +1030,69 @@ class JarvisLive:
 
     _TOPIC_DIGEST_HOUR = 8   # local hour (24h) after which the daily digest may fire
 
+    def _compose_topic_digest(self, topics: list[str], today: str) -> list[tuple[str, str]]:
+        """
+        Runs off the live session entirely — searches + compresses each
+        followed topic itself instead of telling the live model to call
+        web_search per topic (that made repeats-forever and no bookkeeping
+        the model's problem to remember mid-conversation). Feeds each
+        topic's own digest_history back into the search so slow-moving
+        topics stop reporting the same thing every day. Blocking; callers
+        run this in an executor.
+        """
+        from core.search_provider import backend_chain
+        from core.cloud_llm import generate_text
+
+        results: list[tuple[str, str]] = []
+        for topic in topics:
+            history = vault_manager.get_digest_history(topic, n=5)
+            history_str = "; ".join(f"{h['date']}: {h['summary']}" for h in history)
+            extra_instruction = (
+                f"Previously reported to the user: {history_str}. Report only developments "
+                "NEWER than these; if nothing new, say 'no significant updates' in one clause."
+                if history_str else ""
+            )
+
+            raw_text = ""
+            for backend in backend_chain():
+                try:
+                    result = backend.search(f"latest news today: {topic}", extra_instruction=extra_instruction)
+                    if result.text:
+                        raw_text = result.text
+                        break
+                except Exception as e:
+                    print(f"[TopicDigest] ⚠️ {backend.name} failed for {topic!r}: {e}")
+
+            if not raw_text:
+                # All backends failed — skip silently, no history write, retries fresh tomorrow.
+                continue
+
+            try:
+                summary = generate_text(
+                    f"Compress this into 1-2 short spoken sentences about '{topic}', natural "
+                    f"spoken style, no markdown:\n\n{raw_text}",
+                    role="fast",
+                ).strip()
+            except Exception as e:
+                print(f"[TopicDigest] ⚠️ compression failed for {topic!r}: {e}")
+                summary = raw_text[:200]
+
+            if summary:
+                vault_manager.append_digest_history(topic, summary, today)
+                results.append((topic, summary))
+
+        return results
+
     async def _run_topic_digest(self) -> None:
         """
         Background task: once a day (after _TOPIC_DIGEST_HOUR local time), if the
-        user has followed topics, searches the news for each and reads a brief
+        user has followed topics, composes a digest for each and reads a brief
         summary aloud. Delivery is date-stamped in preferences so it survives
         app restarts and never fires twice in the same day.
         """
         from datetime import datetime
+
+        loop = asyncio.get_event_loop()
 
         while True:
             try:
@@ -1086,16 +1114,23 @@ class JarvisLive:
                                 vault_manager.get_identity_field("language")
                     lang_str = f" Respond in {lang}." if lang else ""
 
-                    topic_list = ", ".join(topics)
-                    prompt = (
-                        f"[TOPIC DIGEST] The user follows these topics: {topic_list}. "
-                        "For each topic, call web_search with mode='news' and query set to that topic, "
-                        "then give a brief spoken summary of the most notable update per topic — "
-                        f"a sentence or two each.{lang_str}"
+                    summaries = await loop.run_in_executor(
+                        None, lambda: self._compose_topic_digest(topics, today)
                     )
-                    await self._voice_session.send_text(prompt, turn_complete=True)
-                    self.ui.write_log("SYS: Topic digest sent.")
-                    vault_manager.mark_topic_digest_sent(today)
+                    if summaries:
+                        lines = "\n".join(f"- {t}: {s}" for t, s in summaries)
+                        prompt = (
+                            "[TOPIC DIGEST] Read this briefing naturally, do not call any tools:\n"
+                            f"{lines}\n"
+                            f"Deliver it as a short spoken briefing, a sentence or two per topic.{lang_str}"
+                        )
+                        await self._voice_session.send_text(prompt, turn_complete=True)
+                        self.ui.write_log("SYS: Topic digest sent.")
+                        # Only stamp the day once something was actually
+                        # delivered — empty summaries mean every backend
+                        # failed (e.g. network down), and the 5-minute loop
+                        # should keep retrying rather than losing the day.
+                        vault_manager.mark_topic_digest_sent(today)
             except Exception as e:
                 print(f"[TopicDigest] ⚠️ {e}")
 
@@ -1159,6 +1194,9 @@ class JarvisLive:
         self.ui.write_log("SYS: JARVIS online.")
         if self._dashboard:
             asyncio.create_task(self._dashboard.broadcast({"type": "status", "state": "active"}))
+        if isinstance(voice_session, GeminiLiveSession):
+            if directive := self._priming_directive():
+                asyncio.create_task(voice_session.send_text(directive, turn_complete=True))
 
     async def run(self):
         self._loop = asyncio.get_event_loop()
@@ -1300,6 +1338,7 @@ class JarvisLive:
 
 def main():
     vault_manager.migrate_if_needed()
+    vault_manager.sync_city_from_weather_if_needed()
     ui = JarvisUI("face.png")
 
     def runner():

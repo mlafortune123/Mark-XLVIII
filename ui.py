@@ -1797,6 +1797,7 @@ class MainWindow(QMainWindow):
         self.on_text_command   = None
         self.on_remote_clicked = None   # callable: () -> (url, key) | None
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
+        self.on_settings_saved = None   # callable: () -> None — Preferences panel saved
         self._muted            = False
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
@@ -2887,8 +2888,9 @@ class MainWindow(QMainWindow):
         self._overlay = ov
 
     def _show_onboarding(self):
+        from memory import vault_manager
         self._close_overlay()
-        ov = OnboardingOverlay(self.centralWidget())
+        ov = OnboardingOverlay(self.centralWidget(), initial=vault_manager.DEFAULT_SETTINGS)
         cw = self.centralWidget()
         ow, oh = OnboardingOverlay._OW, OnboardingOverlay._OH
         ov.setGeometry(
@@ -2944,6 +2946,8 @@ class MainWindow(QMainWindow):
         vault_manager.save_settings(result)
         self._close_preferences()
         self._log.append_log("SYS: Preferences updated.")
+        if self.on_settings_saved:
+            self.on_settings_saved()
 
     def _on_setup_done(self, result: dict):
         from memory.config_manager import save_api_key, save_ai_provider
@@ -3045,6 +3049,14 @@ class JarvisUI:
     @on_interrupt.setter
     def on_interrupt(self, cb):
         self._win.on_interrupt = cb
+
+    @property
+    def on_settings_saved(self):
+        return self._win.on_settings_saved
+
+    @on_settings_saved.setter
+    def on_settings_saved(self, cb):
+        self._win.on_settings_saved = cb
 
     def notify_phone_connected(self) -> None:
         self._win.notify_phone_connected()

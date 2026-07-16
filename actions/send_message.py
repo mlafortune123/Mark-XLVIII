@@ -270,3 +270,34 @@ def send_message(
         player.write_log(f"[msg] {result}")
 
     return result
+
+
+# ── Registry-native tool spec ───────────────────────────────────────────────
+
+from core.tool_registry import ToolSpec
+
+
+def _handle(args: dict, ctx) -> str:
+    r = send_message(parameters=args, response=None, player=ctx.ui, session_memory=None)
+    return r or f"Message sent to {args.get('receiver')}."
+
+
+TOOLS = [
+    ToolSpec(
+        name="send_message",
+        declaration={
+            "name": "send_message",
+            "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "receiver":     {"type": "STRING", "description": "Recipient contact name"},
+                    "message_text": {"type": "STRING", "description": "The message to send"},
+                    "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
+                },
+                "required": ["receiver", "message_text", "platform"]
+            }
+        },
+        handler=_handle,
+    )
+]

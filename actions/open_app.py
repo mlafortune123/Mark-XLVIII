@@ -255,3 +255,39 @@ def open_app(
     except Exception as e:
         print(f"[open_app] Error: {e}")
         return f"Failed to open {app_name}: {e}"
+
+
+# ── Registry-native tool spec ───────────────────────────────────────────────
+
+from core.tool_registry import ToolSpec
+
+
+def _handle(args: dict, ctx) -> str:
+    r = open_app(parameters=args, response=None, player=ctx.ui)
+    return r or f"Opened {args.get('app_name')}."
+
+
+TOOLS = [
+    ToolSpec(
+        name="open_app",
+        declaration={
+            "name": "open_app",
+            "description": (
+                "Opens any application on the computer. "
+                "Use this whenever the user asks to open, launch, or start any app, "
+                "website, or program. Always call this tool — never just say you opened it."
+            ),
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "app_name": {
+                        "type": "STRING",
+                        "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
+                    }
+                },
+                "required": ["app_name"]
+            }
+        },
+        handler=_handle,
+    )
+]

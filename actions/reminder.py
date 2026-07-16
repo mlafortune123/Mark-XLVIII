@@ -341,3 +341,34 @@ def reminder(
 
     friendly_time = target_dt.strftime("%B %d at %I:%M %p")
     return f"Reminder set for {friendly_time}."
+
+
+# ── Registry-native tool spec ───────────────────────────────────────────────
+
+from core.tool_registry import ToolSpec
+
+
+def _handle(args: dict, ctx) -> str:
+    r = reminder(parameters=args, response=None, player=ctx.ui)
+    return r or "Reminder set."
+
+
+TOOLS = [
+    ToolSpec(
+        name="reminder",
+        declaration={
+            "name": "reminder",
+            "description": "Sets a timed reminder using Task Scheduler.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "date":    {"type": "STRING", "description": "Date in YYYY-MM-DD format"},
+                    "time":    {"type": "STRING", "description": "Time in HH:MM format (24h)"},
+                    "message": {"type": "STRING", "description": "Reminder message text"}
+                },
+                "required": ["date", "time", "message"]
+            }
+        },
+        handler=_handle,
+    )
+]

@@ -89,6 +89,12 @@ def _get_client(provider: str):
     return client
 
 
+# Public names for external consumers (core/search_provider.py) — the
+# underscored versions stay for this module's internal call sites.
+get_client = _get_client
+model_for  = _model_for
+
+
 # ── Text ─────────────────────────────────────────────────────────────────────
 
 def generate_text(
