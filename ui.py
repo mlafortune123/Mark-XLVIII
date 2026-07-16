@@ -1171,7 +1171,7 @@ class OnboardingOverlay(QWidget):
     done   = pyqtSignal(dict)
     closed = pyqtSignal()   # cancelled without changes (only used when closable=True)
 
-    _OW, _OH = 460, 660  # wide/tall enough for the language + voice dropdowns
+    _OW, _OH = 460, 900  # wide/tall enough for the language + voice + accent/style/pace dropdowns + vault path
 
     def __init__(self, parent=None, initial: dict | None = None, closable: bool = False):
         super().__init__(parent)
@@ -1190,6 +1190,9 @@ class OnboardingOverlay(QWidget):
         self._sel_weather  = initial.get("startup_weather", False)
         self._init_city    = initial.get("weather_city", "")
         self._init_topics  = ", ".join(initial.get("followed_topics", []))
+
+        from memory import vault_manager as _vm
+        self._init_vault_path = str(_vm.get_vault_path())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 22, 30, 22)
@@ -1312,14 +1315,86 @@ class OnboardingOverlay(QWidget):
         layout.addWidget(_lbl("VOICE", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._voice_combo = _combo_field()
-        from core.voices import SUPPORTED_VOICES, DEFAULT_VOICE
-        init_voice = initial.get("voice", DEFAULT_VOICE)
-        for name, style in SUPPORTED_VOICES:
+        from core.cloud_llm import get_provider
+        from core.voices import (
+            SUPPORTED_VOICES, DEFAULT_VOICE,
+            OPENAI_VOICES, DEFAULT_OPENAI_VOICE,
+        )
+        # Gemini and OpenAI each have their own voice catalog — show
+        # whichever one applies to the currently configured AI provider.
+        self._voice_provider = get_provider()
+        if self._voice_provider == "openai":
+            voice_choices, default_voice = OPENAI_VOICES, DEFAULT_OPENAI_VOICE
+        else:
+            voice_choices, default_voice = SUPPORTED_VOICES, DEFAULT_VOICE
+        init_voice = initial.get("voice", default_voice)
+        for name, style in voice_choices:
             self._voice_combo.addItem(f"{name}  —  {style}", userData=name)
         idx = self._voice_combo.findData(init_voice)
         self._voice_combo.setCurrentIndex(idx if idx >= 0 else 0)
         layout.addWidget(self._voice_combo)
         layout.addSpacing(8)
+
+        # ── Accent / Style / Pace ────────────────────────────────────────────────
+        # All three are Gemini-only: implemented as natural-language prompt
+        # instructions to Gemini's speech APIs (no structured field exists —
+        # see core/accents.py, core/styles.py, core/pace.py), so they have no
+        # effect on OpenAI's Realtime API voices. Hidden entirely rather than
+        # shown-but-inert when OpenAI is the active provider.
+        self._delivery_label = _lbl("ACCENT", 8, color=C.TEXT_DIM,
+                                     align=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._delivery_label)
+        self._accent_combo = _combo_field()
+        from core.accents import SUPPORTED_ACCENTS, DEFAULT_ACCENT
+        init_accent = initial.get("accent", DEFAULT_ACCENT)
+        for code, name, _instr in SUPPORTED_ACCENTS:
+            self._accent_combo.addItem(name, userData=code)
+        idx = self._accent_combo.findData(init_accent)
+        self._accent_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        layout.addWidget(self._accent_combo)
+        layout.addSpacing(8)
+
+        self._style_label = _lbl("STYLE", 8, color=C.TEXT_DIM,
+                                  align=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._style_label)
+        self._style_combo = _combo_field()
+        from core.styles import SUPPORTED_STYLES, DEFAULT_STYLE
+        init_style = initial.get("style", DEFAULT_STYLE)
+        for code, name, _instr in SUPPORTED_STYLES:
+            self._style_combo.addItem(name, userData=code)
+        idx = self._style_combo.findData(init_style)
+        self._style_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        layout.addWidget(self._style_combo)
+        layout.addSpacing(8)
+
+        self._pace_label = _lbl("PACE", 8, color=C.TEXT_DIM,
+                                 align=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._pace_label)
+        self._pace_combo = _combo_field()
+        from core.pace import SUPPORTED_PACES, DEFAULT_PACE
+        init_pace = initial.get("pace", DEFAULT_PACE)
+        for code, name, _instr in SUPPORTED_PACES:
+            self._pace_combo.addItem(name, userData=code)
+        idx = self._pace_combo.findData(init_pace)
+        self._pace_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        layout.addWidget(self._pace_combo)
+        layout.addSpacing(8)
+
+        if self._voice_provider == "openai":
+            for w in (self._delivery_label, self._accent_combo,
+                      self._style_label, self._style_combo,
+                      self._pace_label, self._pace_combo):
+                w.setVisible(False)
+
+        # Connected after every combo's setCurrentIndex() so restoring saved
+        # prefs on open doesn't itself trigger a preview — only user changes
+        # do. Shared timer: changing voice, accent, style, or pace previews
+        # the resulting combination.
+        self._voice_preview_timer = QTimer(self)
+        self._voice_preview_timer.setSingleShot(True)
+        self._voice_preview_timer.timeout.connect(self._play_voice_preview)
+        for combo in (self._voice_combo, self._accent_combo, self._style_combo, self._pace_combo):
+            combo.currentIndexChanged.connect(lambda _: self._voice_preview_timer.start(250))
 
         sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.HLine)
         sep3.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep3)
@@ -1331,6 +1406,18 @@ class OnboardingOverlay(QWidget):
         self._topics_input = _text_field("e.g. F1, AI research, Bitcoin")
         self._topics_input.setText(self._init_topics)
         layout.addWidget(self._topics_input)
+        layout.addSpacing(8)
+
+        # ── Vault location ────────────────────────────────────────────────────
+        layout.addWidget(_lbl("MEMORY VAULT FOLDER", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        self._vault_input = _text_field("Path to Obsidian vault folder")
+        self._vault_input.setText(self._init_vault_path)
+        layout.addWidget(self._vault_input)
+        layout.addWidget(_lbl(
+            "Repoints Jarvis here — existing notes are NOT moved or copied.",
+            7, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft
+        ))
         layout.addSpacing(12)
 
         start_btn = QPushButton("▸  START")
@@ -1388,6 +1475,33 @@ class OnboardingOverlay(QWidget):
         self._city_label.setVisible(val)
         self._city_input.setVisible(val)
 
+    def _play_voice_preview(self):
+        from memory.config_manager import get_gemini_key
+
+        # OpenAI's Realtime API has no cheap one-shot preview endpoint (only
+        # a full streaming session) — and OpenAI voice names aren't valid
+        # Gemini voice IDs anyway, so previewing is only supported for the
+        # Gemini catalog.
+        if self._voice_provider == "openai":
+            return
+
+        voice_name = self._voice_combo.currentData()
+        accent     = self._accent_combo.currentData()
+        style      = self._style_combo.currentData()
+        pace       = self._pace_combo.currentData()
+        api_key    = get_gemini_key()
+        if not voice_name or not api_key:
+            return
+
+        def _run():
+            try:
+                from core.voice_preview import play_preview
+                play_preview(api_key, voice_name, accent, style, pace)
+            except Exception as e:
+                print(f"[VoicePreview] Error: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def _collect(self) -> dict:
         topics = [t.strip() for t in self._topics_input.text().split(",")]
         topics = list(dict.fromkeys(t for t in topics if t))  # dedupe, drop empties
@@ -1398,20 +1512,32 @@ class OnboardingOverlay(QWidget):
             "followed_topics": topics,
             "language":        self._lang_combo.currentData(),
             "voice":           self._voice_combo.currentData(),
+            "accent":          self._accent_combo.currentData(),
+            "style":           self._style_combo.currentData(),
+            "pace":            self._pace_combo.currentData(),
+            "vault_path":      self._vault_input.text().strip() or self._init_vault_path,
         }
 
     def _submit(self):
         self.done.emit(self._collect())
 
     def _skip(self):
-        from core.voices import DEFAULT_VOICE
+        from core.voices import DEFAULT_VOICE, DEFAULT_OPENAI_VOICE
+        from core.accents import DEFAULT_ACCENT
+        from core.styles import DEFAULT_STYLE
+        from core.pace import DEFAULT_PACE
+        skip_voice = DEFAULT_OPENAI_VOICE if self._voice_provider == "openai" else DEFAULT_VOICE
         self.done.emit({
             "startup_news":    True,
             "startup_weather": False,
             "weather_city":    "",
             "followed_topics": [],
             "language":        "auto",
-            "voice":           DEFAULT_VOICE,
+            "voice":           skip_voice,
+            "accent":          DEFAULT_ACCENT,
+            "style":           DEFAULT_STYLE,
+            "pace":            DEFAULT_PACE,
+            "vault_path":      self._init_vault_path,
         })
 
     def _cancel(self):
@@ -2719,7 +2845,7 @@ class MainWindow(QMainWindow):
 
     def _check_config(self) -> bool:
         from memory.config_manager import is_configured
-        from memory.preferences_manager import is_onboarded
+        from memory.vault_manager import is_onboarded
         try:
             return is_configured() and is_onboarded()
         except Exception:
@@ -2727,6 +2853,8 @@ class MainWindow(QMainWindow):
 
     def _close_overlay(self):
         if self._overlay is not None:
+            from core.voice_preview import stop_preview
+            stop_preview()
             self._overlay.hide()
             self._overlay.deleteLater()
             self._overlay = None
@@ -2773,10 +2901,20 @@ class MainWindow(QMainWindow):
         self._overlay = ov
 
     def _show_preferences(self):
-        from memory.preferences_manager import load_preferences
+        from memory import vault_manager
 
         self._close_overlay()
-        ov = OnboardingOverlay(self.centralWidget(), initial=load_preferences(), closable=True)
+
+        # The voice preview (one-shot Gemini TTS) and the live session's own
+        # mic capture/speaker output can talk over each other — mic picks up
+        # the preview audio, and both fight over the output device at once.
+        # Force-mute for the duration of the panel; restore whatever the
+        # mute state was beforehand once it closes.
+        self._prefs_muted_before = self._muted
+        if not self._muted:
+            self._toggle_mute()
+
+        ov = OnboardingOverlay(self.centralWidget(), initial=vault_manager.get_settings(), closable=True)
         cw = self.centralWidget()
         ow, oh = OnboardingOverlay._OW, OnboardingOverlay._OH
         ov.setGeometry(
@@ -2785,19 +2923,31 @@ class MainWindow(QMainWindow):
             ow, oh,
         )
         ov.done.connect(self._on_preferences_saved)
-        ov.closed.connect(self._close_overlay)
+        ov.closed.connect(self._close_preferences)
         ov.show()
         self._overlay = ov
 
-    def _on_preferences_saved(self, result: dict):
-        from memory.preferences_manager import save_preferences
-        save_preferences(result)
+    def _close_preferences(self):
         self._close_overlay()
+        if not self._prefs_muted_before and self._muted:
+            self._toggle_mute()
+
+    def _on_preferences_saved(self, result: dict):
+        from memory import vault_manager
+        result = dict(result)
+        vault_path = result.pop("vault_path", None)
+        if vault_path:
+            vault_manager.set_vault_path(vault_path)
+        topics = result.pop("followed_topics", None)
+        if topics is not None:
+            vault_manager.set_followed_topics(topics)
+        vault_manager.save_settings(result)
+        self._close_preferences()
         self._log.append_log("SYS: Preferences updated.")
 
     def _on_setup_done(self, result: dict):
         from memory.config_manager import save_api_key, save_ai_provider
-        from memory.preferences_manager import is_onboarded
+        from memory.vault_manager import is_onboarded
 
         provider = result.get("provider", "gemini")
         save_api_key("gemini", result.get("gemini_key", ""))
@@ -2828,8 +2978,12 @@ class MainWindow(QMainWindow):
             self._finish_ready()
 
     def _on_onboarding_done(self, result: dict):
-        from memory.preferences_manager import complete_onboarding
-        complete_onboarding(result)
+        from memory import vault_manager
+        result = dict(result)
+        vault_path = result.pop("vault_path", None)
+        if vault_path:
+            vault_manager.set_vault_path(vault_path)
+        vault_manager.complete_onboarding(result)
         self._finish_ready()
 
     def _finish_ready(self):

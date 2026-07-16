@@ -174,7 +174,7 @@ class GeminiLiveSession(LiveVoiceSession):
     behavior is intended to be unchanged, just reorganized behind the
     provider-neutral interface."""
 
-    LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+    LIVE_MODEL = "gemini-3.1-flash-live-preview"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -194,6 +194,19 @@ class GeminiLiveSession(LiveVoiceSession):
             system_instruction=self.system_prompt,
             tools=[{"function_declarations": self.tool_declarations}],
             session_resumption=types.SessionResumptionConfig(),
+            # Without this, the model can default to "thinking" on a turn and
+            # return only text/thought parts with zero audio — reproduced
+            # directly against this exact model: a plain text turn came back
+            # audio-less until thinking was disabled. budget=0 forces it
+            # straight to the AUDIO response every turn actually needs.
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+            # gemini-3.1-flash-live-preview: send_client_content() 1007s
+            # unless this is set — confirmed empirically it is NOT actually
+            # limited to a single "initial" call despite the docs' wording;
+            # repeated send_client_content() calls across a session all
+            # succeed as long as this is set AND each turns dict includes
+            # role="user" (omitting role also 1007s, even with this set).
+            history_config=types.HistoryConfig(initial_history_in_client_content=True),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -207,8 +220,11 @@ class GeminiLiveSession(LiveVoiceSession):
     async def send_text(self, text: str, turn_complete: bool = True) -> None:
         if not self.raw_session:
             return
+        # role="user" is required on gemini-3.1-flash-live-preview (see
+        # history_config note in _build_config()) — omitting it 1007s even
+        # though the 2.5 model never needed it.
         await self.raw_session.send_client_content(
-            turns={"parts": [{"text": text}]},
+            turns={"role": "user", "parts": [{"text": text}]},
             turn_complete=turn_complete,
         )
 
@@ -217,8 +233,15 @@ class GeminiLiveSession(LiveVoiceSession):
         if not self.raw_session:
             return
         b64 = base64.b64encode(image_bytes).decode("ascii")
+        # NOTE: send_realtime_input(video=...) was tried first (it's the
+        # "documented" replacement for image content) but empirically does
+        # NOT deliver the image to the model — verified with solid-color
+        # test images (256x256 green/blue/yellow), which came back as
+        # "black"/"white"/wrong colors via video=, but correctly identified
+        # every time via this send_client_content() + role="user" path
+        # (also requires history_config, see _build_config()).
         await self.raw_session.send_client_content(
-            turns={"parts": [
+            turns={"role": "user", "parts": [
                 {"inline_data": {"mime_type": mime_type, "data": b64}},
                 {"text": text},
             ]},
@@ -272,7 +295,10 @@ class GeminiLiveSession(LiveVoiceSession):
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
-            await self.raw_session.send_realtime_input(media=msg)
+            # gemini-3.1-flash-live-preview: send_realtime_input(media=...)
+            # ("media_chunks") is deprecated server-side and hard-closes the
+            # socket with a 1007 — use the explicit audio= kwarg instead.
+            await self.raw_session.send_realtime_input(audio=msg)
 
     async def _listen_audio(self):
         loop = asyncio.get_event_loop()
@@ -435,9 +461,15 @@ class OpenAIRealtimeSession(LiveVoiceSession):
 
     async def run(self) -> None:
         from openai import AsyncOpenAI
+        from core.voices import DEFAULT_OPENAI_VOICE, is_valid_openai_voice
 
         client = AsyncOpenAI(api_key=self.api_key)
         tools  = gemini_tools_to_openai_realtime(self.tool_declarations)
+
+        # self.voice_name may still hold a Gemini voice name (e.g. "Charon")
+        # if it was picked before switching providers — fall back rather
+        # than send OpenAI an invalid voice ID.
+        voice = self.voice_name if is_valid_openai_voice(self.voice_name or "") else DEFAULT_OPENAI_VOICE
 
         async with client.realtime.connect(model=self.MODEL) as connection:
             self._connection      = connection
@@ -451,7 +483,7 @@ class OpenAIRealtimeSession(LiveVoiceSession):
                 "tool_choice": "auto",
                 "audio": {
                     "input":  {"format": {"type": "audio/pcm", "rate": self.send_sample_rate}},
-                    "output": {"format": {"type": "audio/pcm", "rate": self.receive_sample_rate}},
+                    "output": {"format": {"type": "audio/pcm", "rate": self.receive_sample_rate}, "voice": voice},
                 },
             })
 

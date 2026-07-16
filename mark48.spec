@@ -16,11 +16,20 @@ a = Analysis(
         # Bundled read-only resources the app resolves relative to its own
         # install directory (see get_base_dir()/PROMPT_PATH in main.py and
         # the icon lookup in ui.py). Do NOT add config/api_keys.json,
-        # config/preferences.json, config/certs/, or memory/long_term.json
-        # here — those are per-user data and must not ship with the build
-        # (they're also git-ignored, so a CI checkout won't have them).
+        # config/preferences.json, config/vault_path.json, config/certs/,
+        # or memory/long_term.json here — those are per-user data and must
+        # not ship with the build (they're also git-ignored, so a CI
+        # checkout won't have them). The Obsidian vault itself lives outside
+        # the app entirely (default ~/Documents/JarvisVault) so it never
+        # needs bundling or exclusion here.
         ('core/prompt.txt', 'core'),
         ('config/jarvis.ico', 'config'),
+        # Pre-generated voice-preview clips (core/voice_preview.py) — the
+        # gemini-2.5-flash-tts model this comes from caps free-tier accounts
+        # at 10 requests/day, so these ship bundled instead of synthesizing
+        # per click. Re-run scripts/generate_voice_previews.py before
+        # cutting a release if this directory isn't all 30 voices yet.
+        ('core/voice_previews', 'core/voice_previews'),
     ],
     hiddenimports=[
         'PyQt6.sip',

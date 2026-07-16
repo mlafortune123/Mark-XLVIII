@@ -15,9 +15,18 @@ a = Analysis(
     datas=[
         # Bundled read-only resources — see mark48.spec (Windows) for the
         # same rationale. Do NOT add config/api_keys.json, config/preferences.json,
-        # config/certs/, or memory/long_term.json (personal, git-ignored data).
+        # config/vault_path.json, config/certs/, or memory/long_term.json
+        # (personal, git-ignored data). The Obsidian vault itself lives
+        # outside the app entirely (default ~/Documents/JarvisVault) so it
+        # never needs bundling or exclusion here.
         ('core/prompt.txt', 'core'),
         ('config/jarvis.ico', 'config'),
+        # Pre-generated voice-preview clips (core/voice_preview.py) — the
+        # gemini-2.5-flash-tts model this comes from caps free-tier accounts
+        # at 10 requests/day, so these ship bundled instead of synthesizing
+        # per click. Re-run scripts/generate_voice_previews.py before
+        # cutting a release if this directory isn't all 30 voices yet.
+        ('core/voice_previews', 'core/voice_previews'),
     ],
     hiddenimports=[
         'PyQt6.sip',

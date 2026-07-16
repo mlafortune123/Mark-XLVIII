@@ -50,3 +50,31 @@ _NAMES = {name for name, _style in SUPPORTED_VOICES}
 
 def is_valid_voice(name: str) -> bool:
     return name in _NAMES
+
+
+# ── OpenAI Realtime voice catalog ────────────────────────────────────────────
+# Source: OpenAI's gpt-realtime voice list (marin/cedar are the newest,
+# OpenAI-recommended pair; the rest are the legacy eight). These names are
+# NOT interchangeable with the Gemini voice names above — Gemini and OpenAI
+# each have their own catalog, so callers must pick the right list for the
+# active provider (see core.cloud_llm.get_provider()).
+DEFAULT_OPENAI_VOICE = "marin"
+
+OPENAI_VOICES = [
+    ("marin",   "Newest — recommended"),
+    ("cedar",   "Newest — recommended"),
+    ("alloy",   "Neutral"),
+    ("ash",     "Clear"),
+    ("ballad",  "Melodic"),
+    ("coral",   "Warm"),
+    ("echo",    "Deep"),
+    ("sage",    "Calm"),
+    ("shimmer", "Bright"),
+    ("verse",   "Expressive"),
+]
+
+_OPENAI_NAMES = {name for name, _style in OPENAI_VOICES}
+
+
+def is_valid_openai_voice(name: str) -> bool:
+    return name in _OPENAI_NAMES

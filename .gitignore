@@ -13,12 +13,23 @@ __pycache__/
 
 # Secrets / credentials
 config/api_keys.json
-config/preferences.json
 config/certs/
 *.pem
 *.key
 .env
 .env.*
+
+# Personal memory / preferences — per-user runtime data written by
+# memory/vault_manager.py (Settings pointer, legacy pre-vault JSON and its
+# .bak from migration) and core/voice_preview.py's per-machine cache. None
+# of this should ship in the repo — every user starts with a fresh vault via
+# onboarding, and vault_manager.migrate_if_needed() regenerates the rest.
+# The Obsidian vault itself lives outside the repo entirely by default
+# (~/Documents/JarvisVault), so it never needs an entry here.
+config/preferences.json*
+config/vault_path.json
+config/voice_previews_cache/
+memory/long_term.json*
 
 # macOS
 .DS_Store

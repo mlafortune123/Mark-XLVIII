@@ -40,16 +40,16 @@ class ProactiveEngine:
     def mark_triggered(self) -> None:
         self._last_triggered = time.monotonic()
 
-    def build_prompt(self, memory: dict) -> str:
+    def build_prompt(self) -> str:
         """
         Builds the context snapshot sent to Gemini.
         Gemini reads it and decides freely what — if anything — to say.
         """
-        from memory.memory_manager import format_memory_for_prompt
+        from memory import vault_manager
 
         now      = datetime.now()
         time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
-        mem_str  = format_memory_for_prompt(memory) or "(no user data stored yet)"
+        mem_str  = vault_manager.build_core_prompt_block() or "(no user data stored yet)"
 
         silence_min = int((time.monotonic() - self._last_triggered +
                            self.min_silence_secs) // 60)

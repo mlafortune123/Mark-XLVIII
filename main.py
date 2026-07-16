@@ -15,6 +15,24 @@ if _platform.system() == "Windows":
     _subprocess.Popen = _Popen
 # ─────────────────────────────────────────────────────────────────────────────
 
+# sounddevice's internal _array() helper does `data.shape = -1, channels`,
+# which NumPy 2.5 deprecated in favor of np.reshape() — fires on every audio
+# callback (core/live_voice.py's InputStream/RawOutputStream run continuously
+# for the whole life of a voice session, so this was spamming the log). A
+# plain warnings.filterwarnings() didn't reliably suppress it — PortAudio
+# invokes this from its own native callback thread via cffi, and the exact
+# warning-registry/threading interaction wasn't consistent — so we patch the
+# function itself to stop emitting the deprecated call in the first place.
+# Purely cosmetic fix: identical output, just via np.reshape() instead of
+# in-place .shape assignment.
+import numpy as _np
+import sounddevice as _sd
+
+def _patched_sd_array(buffer, channels, dtype):
+    return _np.frombuffer(buffer, dtype=dtype).reshape(-1, channels)
+
+_sd._array = _patched_sd_array
+
 import asyncio
 import threading
 import time
@@ -24,15 +42,15 @@ from datetime import datetime
 from pathlib import Path
 
 from ui import JarvisUI
-from memory.memory_manager import (
-    load_memory, update_memory, format_memory_for_prompt,
-)
+from memory import vault_manager
 from memory.config_manager import get_gemini_key, get_openai_key, get_anthropic_key
-from memory.preferences_manager import load_preferences, save_preferences
 from core.cloud_llm import get_provider
 from core.live_voice import LiveVoiceSession, GeminiLiveSession, OpenAIRealtimeSession
 from core.languages import language_name, language_locale
 from core.voices import DEFAULT_VOICE
+from core.accents import accent_instruction, DEFAULT_ACCENT
+from core.styles import style_instruction, DEFAULT_STYLE
+from core.pace import pace_instruction, DEFAULT_PACE
 
 from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
@@ -500,6 +518,25 @@ TOOL_DECLARATIONS = [
             "required": ["category", "key", "value"]
         }
     },
+    {
+        "name": "search_memory",
+        "description": (
+            "Searches the user's long-term memory vault for things you know about them that "
+            "are NOT already in your system prompt — followed topics, projects, people, and "
+            "other saved facts. ALWAYS call this before web_search when the user asks something "
+            "generic like 'what's the news' or 'any updates' with no explicit subject, to check "
+            "whether they follow specific topics first. Also use it whenever a question depends "
+            "on remembered context (e.g. 'what's my sister's name', 'how's my project going')."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query":    {"type": "STRING", "description": "What to search for"},
+                "category": {"type": "STRING", "description": "topics | people | projects | facts | any (default: any)"},
+            },
+            "required": ["query"]
+        }
+    },
 ]
 
 # --- Plugin system ---
@@ -570,12 +607,32 @@ class JarvisLive:
     def _preferred_language(self) -> str | None:
         """Display name of the user's locked response language, or None if
         they've left it on auto-detect."""
-        code = load_preferences().get("language", "auto")
+        code = vault_manager.get_settings().get("language", "auto")
         return language_name(code) if code != "auto" else None
 
+    def _preferred_accent(self) -> str | None:
+        """Natural-language accent instruction for the user's locked accent,
+        or None if left on default. Gemini's speech APIs have no structured
+        accent field (see core/accents.py) — this only works as a
+        system-prompt instruction, same mechanism as the language override
+        below."""
+        code = vault_manager.get_settings().get("accent", DEFAULT_ACCENT)
+        return accent_instruction(code) if code != DEFAULT_ACCENT else None
+
+    def _preferred_style(self) -> str | None:
+        """Natural-language style instruction for the user's locked speaking
+        style, or None if left on default (see core/styles.py)."""
+        code = vault_manager.get_settings().get("style", DEFAULT_STYLE)
+        return style_instruction(code) if code != DEFAULT_STYLE else None
+
+    def _preferred_pace(self) -> str | None:
+        """Natural-language pace instruction for the user's locked speaking
+        pace, or None if left on default (see core/pace.py)."""
+        code = vault_manager.get_settings().get("pace", DEFAULT_PACE)
+        return pace_instruction(code) if code != DEFAULT_PACE else None
+
     def _build_system_prompt(self) -> str:
-        memory     = load_memory()
-        mem_str    = format_memory_for_prompt(memory)
+        mem_str    = vault_manager.build_core_prompt_block()
         sys_prompt = _load_system_prompt()
 
         now      = datetime.now()
@@ -601,6 +658,26 @@ class JarvisLive:
                 f"Do not re-detect or switch languages, and do not call save_memory to "
                 f"update identity.language while this is active."
             )
+
+        # Style/pace/accent are all Gemini-only, prompt-instruction-based
+        # controls (no structured API field for any of them — see
+        # core/styles.py, core/pace.py, core/accents.py), so they're folded
+        # into one block rather than three near-duplicate ones.
+        delivery_fragments = []
+        if style := self._preferred_style():
+            delivery_fragments.append(f"in {style}")
+        if pace := self._preferred_pace():
+            delivery_fragments.append(f"at {pace}")
+        if accent := self._preferred_accent():
+            delivery_fragments.append(f"with {accent}")
+        if delivery_fragments:
+            delivery = ", ".join(delivery_fragments)
+            parts.append(
+                f"\n[DELIVERY OVERRIDE]\n"
+                f"The user has explicitly configured your spoken delivery in settings: "
+                f"speak {delivery}. Maintain this consistently across all responses, "
+                f"regardless of the selected voice's natural default characteristics."
+            )
         return "\n".join(parts)
 
     async def _dispatch_tool(self, name: str, args: dict) -> str:
@@ -612,18 +689,26 @@ class JarvisLive:
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
+        loop = asyncio.get_event_loop()
+
         if name == "save_memory":
             category = args.get("category", "notes")
             key      = args.get("key", "")
             value    = args.get("value", "")
             if key and value:
-                update_memory({category: {key: {"value": value}}})
-                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+                await loop.run_in_executor(None, lambda: vault_manager.save_fact(category, key, value))
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return "ok"
 
-        loop   = asyncio.get_event_loop()
+        if name == "search_memory":
+            query    = args.get("query", "")
+            category = args.get("category", "any")
+            r = await loop.run_in_executor(None, lambda: vault_manager.search_memory(query, category))
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return r
+
         result = "Done."
 
         try:
@@ -832,21 +917,14 @@ class JarvisLive:
         if not self._voice_session:
             return
 
-        prefs           = load_preferences()
+        prefs           = vault_manager.get_settings()
         want_news       = prefs.get("startup_news", True)
         want_weather    = prefs.get("startup_weather", False)
         weather_city    = (prefs.get("weather_city") or "").strip()
 
         # ── memory ───────────────────────────────────────────────────────────
-        memory   = load_memory()
-        identity = memory.get("identity", {})
-
-        def _val(k: str) -> str:
-            e = identity.get(k, {})
-            return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
-
-        lang = self._preferred_language() or _val("language")
-        name = _val("name")
+        lang = self._preferred_language() or vault_manager.get_identity_field("language")
+        name = vault_manager.get_identity_field("name")
 
         from datetime import datetime
         time_str = datetime.now().strftime("%H:%M")
@@ -897,9 +975,15 @@ class JarvisLive:
         if not self._voice_session:
             return
 
+        topics = await asyncio.to_thread(vault_manager.list_followed_topics)
+        topics_clause = (
+            f" The user follows these topics — weight the news toward them if relevant: {', '.join(topics)}."
+            if topics else ""
+        )
         p2 = (
             "[BRIEFING] Call web_search with mode='news' and query='top world news today' "
-            "to find actual recent news articles with real event headlines (not just website names). "
+            "to find actual recent news articles with real event headlines (not just website names)."
+            f"{topics_clause} "
             "After the search, say ONE specific news event from the results in one sentence, "
             f"then say the full list is displayed on screen.{lang_str}"
         )
@@ -963,8 +1047,7 @@ class JarvisLive:
             self._proactive.mark_triggered()
 
             try:
-                memory = await asyncio.to_thread(load_memory)
-                prompt = self._proactive.build_prompt(memory)
+                prompt = await asyncio.to_thread(self._proactive.build_prompt)
                 await self._voice_session.send_text(prompt, turn_complete=True)
                 self.ui.write_log("SYS: Proactive check-in.")
             except Exception as e:
@@ -985,8 +1068,8 @@ class JarvisLive:
 
         while True:
             try:
-                prefs  = load_preferences()
-                topics = prefs.get("followed_topics") or []
+                prefs  = vault_manager.get_settings()
+                topics = vault_manager.list_followed_topics()
                 now    = datetime.now()
                 today  = now.strftime("%Y-%m-%d")
 
@@ -998,12 +1081,9 @@ class JarvisLive:
                     and not self._voice_session.is_speaking()
                 )
                 if ready:
-                    memory     = load_memory()
-                    identity   = memory.get("identity", {})
-                    lang_e     = identity.get("language", {})
-                    lang_code  = prefs.get("language", "auto")
-                    lang       = (language_name(lang_code) if lang_code != "auto" else "") or \
-                                 (lang_e.get("value", "") if isinstance(lang_e, dict) else str(lang_e)).strip()
+                    lang_code = prefs.get("language", "auto")
+                    lang      = (language_name(lang_code) if lang_code != "auto" else "") or \
+                                vault_manager.get_identity_field("language")
                     lang_str = f" Respond in {lang}." if lang else ""
 
                     topic_list = ", ".join(topics)
@@ -1015,7 +1095,7 @@ class JarvisLive:
                     )
                     await self._voice_session.send_text(prompt, turn_complete=True)
                     self.ui.write_log("SYS: Topic digest sent.")
-                    save_preferences({"topic_digest_last": today})
+                    vault_manager.mark_topic_digest_sent(today)
             except Exception as e:
                 print(f"[TopicDigest] ⚠️ {e}")
 
@@ -1119,7 +1199,7 @@ class JarvisLive:
                 self._vision_busy          = False
                 self._vision_last_time     = 0.0
 
-                voice_prefs = load_preferences()
+                voice_prefs = vault_manager.get_settings()
                 common_kwargs = dict(
                     system_prompt=system_prompt,
                     tool_declarations=TOOL_DECLARATIONS,
@@ -1219,6 +1299,7 @@ class JarvisLive:
             await asyncio.sleep(delay)
 
 def main():
+    vault_manager.migrate_if_needed()
     ui = JarvisUI("face.png")
 
     def runner():

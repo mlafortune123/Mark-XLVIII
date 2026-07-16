@@ -79,7 +79,7 @@ def _get_api_key() -> str:
 def _get_os() -> str:
     return _load_config().get("os_system", "windows").lower()
 
-_LIVE_MODEL         = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+_LIVE_MODEL         = "gemini-3.1-flash-live-preview"
 _CHANNELS           = 1
 _RECEIVE_SAMPLE_RATE = 24_000
 _CHUNK_SIZE         = 1_024
@@ -266,13 +266,46 @@ class _VisionSession:
             http_options={"api_version": "v1beta"},
         )
         from core.voices import DEFAULT_VOICE
-        from memory.preferences_manager import load_preferences
-        voice_name = load_preferences().get("voice", DEFAULT_VOICE)
+        from core.accents import accent_instruction, DEFAULT_ACCENT
+        from core.styles import style_instruction, DEFAULT_STYLE
+        from core.pace import pace_instruction, DEFAULT_PACE
+        from memory import vault_manager
+        prefs      = vault_manager.get_settings()
+        voice_name = prefs.get("voice", DEFAULT_VOICE)
+
+        system_instruction = _SYSTEM_PROMPT
+        # Style/pace/accent are all Gemini-only, prompt-instruction-based
+        # controls (no structured API field for any — see core/styles.py,
+        # core/pace.py, core/accents.py) — folded into one block, same as
+        # main.py::_build_system_prompt()'s [DELIVERY OVERRIDE].
+        style_code  = prefs.get("style", DEFAULT_STYLE)
+        pace_code   = prefs.get("pace", DEFAULT_PACE)
+        accent_code = prefs.get("accent", DEFAULT_ACCENT)
+        delivery_fragments = []
+        if style_code != DEFAULT_STYLE:
+            delivery_fragments.append(f"in {style_instruction(style_code)}")
+        if pace_code != DEFAULT_PACE:
+            delivery_fragments.append(f"at {pace_instruction(pace_code)}")
+        if accent_code != DEFAULT_ACCENT:
+            delivery_fragments.append(f"with {accent_instruction(accent_code)}")
+        if delivery_fragments:
+            delivery = ", ".join(delivery_fragments)
+            system_instruction += (
+                f"\n\n[DELIVERY OVERRIDE]\nThe user has explicitly configured your "
+                f"spoken delivery in settings: speak {delivery}."
+            )
 
         config = gtypes.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
-            system_instruction=_SYSTEM_PROMPT,
+            system_instruction=system_instruction,
+            # See core/live_voice.py::_build_config() for why this is
+            # required — without it this model can silently return only
+            # text/thought parts and zero audio on a turn.
+            thinking_config=gtypes.ThinkingConfig(thinking_budget=0),
+            # See core/live_voice.py::_build_config() for why this is
+            # required on gemini-3.1-flash-live-preview.
+            history_config=gtypes.HistoryConfig(initial_history_in_client_content=True),
             speech_config=gtypes.SpeechConfig(
                 voice_config=gtypes.VoiceConfig(
                     prebuilt_voice_config=gtypes.PrebuiltVoiceConfig(
@@ -318,9 +351,14 @@ class _VisionSession:
                 print("[Vision] ⚠️  No session — dropping image")
                 continue
             try:
+                # role="user" is required on gemini-3.1-flash-live-preview
+                # (see core/live_voice.py::send_image_turn for why
+                # send_realtime_input(video=...) was tried and rejected —
+                # it doesn't actually deliver image content to the model).
                 b64 = base64.b64encode(image_bytes).decode("ascii")
                 await self._session.send_client_content(
                     turns={
+                        "role": "user",
                         "parts": [
                             {"inline_data": {"mime_type": mime_type, "data": b64}},
                             {"text": user_text},
