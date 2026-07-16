@@ -391,13 +391,17 @@ repo style, not an oversight; don't "fix" it as a drive-by refactor.
 ## Dashboard / remote control
 
 - **`dashboard/server.py`** — FastAPI app, `DashboardServer` class. Serves a
-  local HTTPS (self-signed certs in `config/certs/`) web UI so a phone can
-  pair (QR code via `qrcode[pil]`), stream mic audio over `/ws/phone-audio`,
-  send text commands (`/api/command`), and upload files. Session auth via
-  AES (`_derive_key`/`_decrypt_cbc`) keyed off a per-launch session key
-  generated in `main.py` (`_make_remote_key`). `/ws` is the main
-  bidirectional channel for the desktop UI's own websocket needs;
-  `/ws/phone-audio` is phone-specific.
+  local **plain HTTP** (deliberately — see gotcha 13) web UI on port 8000 so
+  a phone can pair (QR code via `qrcode[pil]`), stream mic audio over
+  `/ws/phone-audio`, send text commands (`/api/command`), and upload files.
+  Session auth via AES (`_derive_key`/`_decrypt_cbc`) keyed off a per-launch
+  session key generated in `main.py` (`_make_remote_key`) — this is what
+  actually protects command confidentiality, independent of transport.
+  `/ws` is the main bidirectional channel for the desktop UI's own
+  websocket needs; `/ws/phone-audio` is phone-specific. `get_url()` /
+  `get_manual_url()` both point at the same host:port (`get_manual_url()`
+  is just the bare `ip:port` form for typing into a browser, since there's
+  only one scheme now — no separate HTTPS alias port).
 
 ## Build & packaging
 
@@ -551,3 +555,50 @@ repo style, not an oversight; don't "fix" it as a drive-by refactor.
       repeatably within one persistent session, with the full production
       config (`tools`, `system_instruction`, `thinking_config`,
       `speech_config` all set together).
+12. **Search recency is a `system_instruction` problem, not just a
+    grounding problem — always pair `google_search` with a date-anchor
+    instruction.** `google_search` grounding fetching live results does
+    NOT by itself guarantee the model's synthesis of those results reads
+    as current — without being explicitly told today's real date and that
+    live grounding should override its training-era assumptions, the
+    model can still misdate things or blend in stale background knowledge
+    on top of fresh search hits. `actions/web_search.py::_recency_instruction()`
+    is the fix — a `system_instruction` string (real date + "trust
+    grounding over training data, prioritize recency") passed alongside
+    `tools: [{"google_search": {}}]` in every grounded call
+    (`_gemini_search()`, used by `search`/`news`/`research`/`price`/
+    `compare`, and `_gemini_headlines()`). **This is a standing
+    convention, not a one-off fix** — any new tool that adds
+    `google_search` grounding must include this instruction too, or it
+    will regress to feeling stale even though the underlying grounding
+    still works. Separately, `core/prompt.txt`'s "Time-sensitive info"
+    rule stops the *live conversation model* from skipping `web_search`
+    entirely and answering time-sensitive questions from its own memory —
+    a distinct failure mode from the grounded call itself being
+    under-anchored, and both were needed to fix the user-reported
+    "stale news" symptom.
+13. **The dashboard used to switch to HTTPS-only whenever
+    `config/certs/jarvis.{key,crt}` happened to exist on disk, and that
+    silently broke both connection paths.** `dashboard/server.py` no
+    longer has this branch at all — it always serves plain HTTP on a
+    single port (`PORT = 8000`). Found by direct reproduction: with the
+    certs present, `_ssl_enabled()` returned `True`, which (a) made
+    `get_manual_url()` return a bare `ip:8001` string with no scheme,
+    pointing at a TLS-only alias port — typing that into a browser sends
+    plain HTTP, which a TLS listener just drops (`curl` confirmed "Empty
+    reply from server"), and (b) made the QR code's `https://ip:8000/...`
+    link hit a self-signed cert, which phone browsers show as a
+    connection-not-private interstitial instead of the app — both looked
+    like "goes to the URL, nothing happens." Deliberately not re-added:
+    the file's own header docstring already stated the plain-HTTP design
+    intent, and command confidentiality is handled at the application
+    layer (AES, `_derive_key`/`_decrypt_cbc`) independent of transport, so
+    TLS was redundant for that path anyway — it only mattered for
+    `/ws/phone-audio` mic streaming and `/api/upload` file transfers,
+    which do travel in cleartext now. That's an accepted tradeoff for a
+    LAN-only personal-use feature, not an oversight — if it ever needs
+    revisiting, don't just drop the certs back in without also fixing
+    `get_manual_url()`/the alias-port split, since that pairing is what
+    actually broke it.
+
+PUT ANY PLANS YOU MAKE INTO THE PLANS FOLDER

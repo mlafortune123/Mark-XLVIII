@@ -1,6 +1,29 @@
 #web_search.py
+from datetime import datetime
+
 from core.cloud_llm import get_provider
 from memory.config_manager import get_gemini_key
+
+
+def _recency_instruction() -> str:
+    """System instruction anchoring grounded search calls to the real
+    wall-clock date. Without this, google_search grounding still fetches
+    live results, but the model's own synthesis of them isn't told today's
+    actual date or that it should trust live grounding over its (older)
+    training data — leading to stale-feeling answers even when the
+    underlying search results were current. Apply this to every one-shot
+    Gemini call that uses google_search grounding — see claude.md's
+    "Search recency" gotcha before adding a new one without it."""
+    now = datetime.now()
+    return (
+        f"Today's real date is {now.strftime('%A, %B %d, %Y')}. This is "
+        "ground truth — your training data has an earlier cutoff and may be "
+        "stale or wrong about anything time-sensitive. Trust the search "
+        "results over your own memorized knowledge. Prioritize the most "
+        "recent, currently relevant information; if results conflict or "
+        "include older material, prefer the newer one and say so if it "
+        "matters. Never present outdated information as current."
+    )
 
 
 def _gemini_search(query: str) -> str:
@@ -16,7 +39,10 @@ def _gemini_search(query: str) -> str:
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=query,
-        config={"tools": [{"google_search": {}}]},
+        config={
+            "tools": [{"google_search": {}}],
+            "system_instruction": _recency_instruction(),
+        },
     )
 
     text = ""
@@ -121,7 +147,10 @@ def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=f"Current world news: {n} headlines. Numbered list, titles only.",
-        config={"tools": [{"google_search": {}}]},
+        config={
+            "tools": [{"google_search": {}}],
+            "system_instruction": _recency_instruction(),
+        },
     )
 
     raw = ""
