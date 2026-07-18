@@ -21,7 +21,7 @@ else:
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -82,6 +82,26 @@ class C:
     WHITE     = "#ddeeff"
     DARK      = "#000d14"
     BAR_BG    = "#011520"
+
+
+class G:
+    """Palette matching the new glass HUD (ui_web/hud.css) — used by the
+    native Preferences overlay (OnboardingOverlay), the one Qt-widget
+    surface still shown on top of the web-based main window."""
+    PANEL_BG   = "rgba(13, 23, 38, 235)"
+    PANEL_BG2  = "rgba(9, 17, 29, 235)"
+    BORDER     = "rgba(120, 210, 255, 70)"
+    BORDER_HI  = "rgba(140, 215, 255, 130)"
+    HAIRLINE   = "rgba(140, 200, 255, 40)"
+    ACCENT     = "#4fd8ff"
+    ACCENT_DIM = "#2a86ab"
+    ACCENT_GHO = "rgba(79, 216, 255, 30)"
+    TEXT       = "#e8f4ff"
+    TEXT_DIM   = "rgba(170, 215, 250, 145)"
+    TEXT_FAINT = "rgba(160, 210, 245, 110)"
+    FIELD_BG   = "rgba(8, 16, 28, 200)"
+    GREEN      = "#54e6a8"
+    AMBER      = "#ffb454"
 
 
 def qcol(h: str, a: int = 255) -> QColor:
@@ -389,52 +409,6 @@ class _CameraStreamWindow(QWidget):
         self._live_lbl.clear()
 
 
-class FontDebugDialog(QDialog):
-    """Dev-only font preview — lists every registered Avengeance family
-    (including ones no widget currently uses) plus the system monospace,
-    each rendered in itself. Opened via Ctrl+Shift+F (MainWindow), not
-    reachable from any regular UI control."""
-
-    _SAMPLE = "AaBbCc 0123  J.A.R.V.I.S"
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Font Debug")
-        self.resize(560, 480)
-        self.setStyleSheet(f"background: {C.DARK};")
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("border: none; background: transparent;")
-        outer.addWidget(scroll)
-
-        inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
-        lay = QVBoxLayout(inner)
-        lay.setSpacing(14)
-
-        for role, family in jfonts.ALL_FONTS:
-            name_lbl = QLabel(f"{role}  —  {family}")
-            name_lbl.setFont(QFont("Courier New", 8))
-            name_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-            lay.addWidget(name_lbl)
-
-            sample_lbl = QLabel(self._SAMPLE)
-            sample_lbl.setFont(QFont(family, 20))
-            sample_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-            lay.addWidget(sample_lbl)
-
-            sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-            sep.setStyleSheet(f"color: {C.BORDER};")
-            lay.addWidget(sep)
-
-        lay.addStretch()
-        scroll.setWidget(inner)
-
-
 class SetupOverlay(QWidget):
     # Emits a single dict: {"provider": str, "gemini_key": str, "openai_key": str,
     # "anthropic_key": str, "os": str}
@@ -545,7 +519,7 @@ class SetupOverlay(QWidget):
         self._sel_ai(self._sel_provider)  # applies styling + initial field visibility
 
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
+        sep2.setStyleSheet(f"color: {G.HAIRLINE};"); layout.addWidget(sep2)
         layout.addSpacing(4)
 
         layout.addWidget(_lbl("OPERATING SYSTEM", 8, color=C.TEXT_DIM,
@@ -678,9 +652,9 @@ class OnboardingOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             OnboardingOverlay {{
-                background: rgba(0, 6, 10, 245);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
+                background: {G.PANEL_BG};
+                border: 1px solid {G.BORDER};
+                border-radius: 20px;
             }}
         """)
 
@@ -715,7 +689,7 @@ class OnboardingOverlay(QWidget):
                 margin: 4px 2px 4px 0;
             }}
             QScrollBar::handle:vertical {{
-                background: {C.BORDER_B};
+                background: {G.BORDER_HI};
                 border-radius: 4px;
                 min-height: 20px;
             }}
@@ -730,10 +704,10 @@ class OnboardingOverlay(QWidget):
         scroll.setWidget(content)
 
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(30, 22, 30, 22)
+        layout.setContentsMargins(30, 26, 30, 26)
         layout.setSpacing(8)
 
-        def _lbl(txt, font_size=9, bold=False, color=C.PRI,
+        def _lbl(txt, font_size=9, bold=False, color=G.ACCENT,
                  align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt)
             w.setAlignment(align)
@@ -748,48 +722,48 @@ class OnboardingOverlay(QWidget):
             field = QLineEdit()
             field.setPlaceholderText(placeholder)
             field.setFont(QFont("Courier New", 10))
-            field.setFixedHeight(32)
+            field.setFixedHeight(34)
             field.setStyleSheet(f"""
                 QLineEdit {{
-                    background: #000d12; color: {C.TEXT};
-                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
+                    background: {G.FIELD_BG}; color: {G.TEXT};
+                    border: 1px solid {G.BORDER}; border-radius: 10px; padding: 4px 10px;
                 }}
-                QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+                QLineEdit:focus {{ border: 1px solid {G.ACCENT}; }}
             """)
             return field
 
         def _combo_field() -> QComboBox:
             combo = QComboBox()
             combo.setFont(QFont("Courier New", 10))
-            combo.setFixedHeight(32)
+            combo.setFixedHeight(34)
             combo.setCursor(Qt.CursorShape.PointingHandCursor)
             combo.setStyleSheet(f"""
                 QComboBox {{
-                    background: #000d12; color: {C.TEXT};
-                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
+                    background: {G.FIELD_BG}; color: {G.TEXT};
+                    border: 1px solid {G.BORDER}; border-radius: 10px; padding: 4px 10px;
                 }}
-                QComboBox:focus {{ border: 1px solid {C.PRI}; }}
+                QComboBox:focus {{ border: 1px solid {G.ACCENT}; }}
                 QComboBox::drop-down {{ border: none; width: 22px; }}
                 QComboBox QAbstractItemView {{
-                    background: #000d12; color: {C.TEXT};
-                    border: 1px solid {C.BORDER_B};
-                    selection-background-color: {C.PRI_GHO};
-                    selection-color: {C.PRI};
+                    background: {G.PANEL_BG2}; color: {G.TEXT};
+                    border: 1px solid {G.BORDER_HI};
+                    selection-background-color: {G.ACCENT_GHO};
+                    selection-color: {G.ACCENT};
                     outline: none;
                 }}
             """)
             return combo
 
-        layout.addWidget(_lbl("◈  PREFERENCES" if closable else "◈  PERSONALISE J.A.R.V.I.S.", 13, True))
-        layout.addWidget(_lbl("Choose what Jarvis does when it starts up.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("PREFERENCES" if closable else "PERSONALISE J.A.R.V.I.S.", 14, True))
+        layout.addWidget(_lbl("Choose what Jarvis does when it starts up.", 9, color=G.TEXT_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
+        sep.setStyleSheet(f"color: {G.HAIRLINE};"); layout.addWidget(sep)
         layout.addSpacing(4)
 
         # ── News toggle ──────────────────────────────────────────────────────
-        layout.addWidget(_lbl("DAILY NEWS SUMMARY", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("DAILY NEWS SUMMARY", 8, color=G.TEXT_FAINT,
                                align=Qt.AlignmentFlag.AlignLeft))
         news_row = QHBoxLayout(); news_row.setSpacing(6)
         self._news_btns: dict[bool, QPushButton] = {}
@@ -805,7 +779,7 @@ class OnboardingOverlay(QWidget):
         layout.addSpacing(8)
 
         # ── Weather toggle + city field ──────────────────────────────────────
-        layout.addWidget(_lbl("DAILY WEATHER REPORT", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("DAILY WEATHER REPORT", 8, color=G.TEXT_FAINT,
                                align=Qt.AlignmentFlag.AlignLeft))
         weather_row = QHBoxLayout(); weather_row.setSpacing(6)
         self._weather_btns: dict[bool, QPushButton] = {}
@@ -820,7 +794,7 @@ class OnboardingOverlay(QWidget):
         layout.addLayout(weather_row)
         layout.addSpacing(6)
 
-        self._city_label = _lbl("CITY", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft)
+        self._city_label = _lbl("CITY", 8, color=G.TEXT_FAINT, align=Qt.AlignmentFlag.AlignLeft)
         self._city_input = _text_field("e.g. New York")
         self._city_input.setText(self._init_city)
         layout.addWidget(self._city_label)
@@ -831,11 +805,11 @@ class OnboardingOverlay(QWidget):
         self._sel_weather_toggle(self._sel_weather)
 
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
+        sep2.setStyleSheet(f"color: {G.HAIRLINE};"); layout.addWidget(sep2)
         layout.addSpacing(4)
 
         # ── Preferred language ──────────────────────────────────────────────
-        layout.addWidget(_lbl("PREFERRED LANGUAGE", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("PREFERRED LANGUAGE", 8, color=G.TEXT_FAINT,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._lang_combo = _combo_field()
         from core.languages import SUPPORTED_LANGUAGES
@@ -848,7 +822,7 @@ class OnboardingOverlay(QWidget):
         layout.addSpacing(8)
 
         # ── Voice ─────────────────────────────────────────────────────────────
-        layout.addWidget(_lbl("VOICE", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("VOICE", 8, color=G.TEXT_FAINT,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._voice_combo = _combo_field()
         from core.cloud_llm import get_provider
@@ -877,7 +851,7 @@ class OnboardingOverlay(QWidget):
         # see core/accents.py, core/styles.py, core/pace.py), so they have no
         # effect on OpenAI's Realtime API voices. Hidden entirely rather than
         # shown-but-inert when OpenAI is the active provider.
-        self._delivery_label = _lbl("ACCENT", 8, color=C.TEXT_DIM,
+        self._delivery_label = _lbl("ACCENT", 8, color=G.TEXT_FAINT,
                                      align=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._delivery_label)
         self._accent_combo = _combo_field()
@@ -890,7 +864,7 @@ class OnboardingOverlay(QWidget):
         layout.addWidget(self._accent_combo)
         layout.addSpacing(8)
 
-        self._style_label = _lbl("STYLE", 8, color=C.TEXT_DIM,
+        self._style_label = _lbl("STYLE", 8, color=G.TEXT_FAINT,
                                   align=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._style_label)
         self._style_combo = _combo_field()
@@ -903,7 +877,7 @@ class OnboardingOverlay(QWidget):
         layout.addWidget(self._style_combo)
         layout.addSpacing(8)
 
-        self._pace_label = _lbl("PACE", 8, color=C.TEXT_DIM,
+        self._pace_label = _lbl("PACE", 8, color=G.TEXT_FAINT,
                                  align=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._pace_label)
         self._pace_combo = _combo_field()
@@ -933,11 +907,11 @@ class OnboardingOverlay(QWidget):
             combo.currentIndexChanged.connect(lambda _: self._voice_preview_timer.start(250))
 
         sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.HLine)
-        sep3.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep3)
+        sep3.setStyleSheet(f"color: {G.HAIRLINE};"); layout.addWidget(sep3)
         layout.addSpacing(4)
 
         # ── Followed topics ──────────────────────────────────────────────────
-        layout.addWidget(_lbl("TOPICS TO FOLLOW (optional)", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("TOPICS TO FOLLOW (optional)", 8, color=G.TEXT_FAINT,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._topics_input = _text_field("e.g. F1, AI research, Bitcoin")
         self._topics_input.setText(self._init_topics)
@@ -945,14 +919,14 @@ class OnboardingOverlay(QWidget):
         layout.addSpacing(8)
 
         # ── Vault location ────────────────────────────────────────────────────
-        layout.addWidget(_lbl("MEMORY VAULT FOLDER", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("MEMORY VAULT FOLDER", 8, color=G.TEXT_FAINT,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._vault_input = _text_field("Path to Obsidian vault folder")
         self._vault_input.setText(self._init_vault_path)
         layout.addWidget(self._vault_input)
         layout.addWidget(_lbl(
             "Repoints Jarvis here — existing notes are NOT moved or copied.",
-            7, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft
+            7, color=G.TEXT_FAINT, align=Qt.AlignmentFlag.AlignLeft
         ))
         layout.addSpacing(12)
 
@@ -1386,11 +1360,6 @@ class MainWindow(QMainWindow):
         """Slot — display camera preview overlay (main thread)."""
         self._cam_preview.show_frame(img_bytes)
         self._reposition_floats()
-
-    def _show_font_debug(self) -> None:
-        """Ctrl+Shift+F — dev-only dialog previewing every registered font."""
-        dlg = FontDebugDialog(self)
-        dlg.exec()
 
     # --- Live camera stream — native floating window ------------------------
     def _on_cam_stream(self, start: bool) -> None:

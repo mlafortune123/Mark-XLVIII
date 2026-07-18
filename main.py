@@ -47,10 +47,10 @@ from memory.config_manager import get_gemini_key, get_openai_key, get_anthropic_
 from core.cloud_llm import get_provider
 from core.live_voice import LiveVoiceSession, GeminiLiveSession, OpenAIRealtimeSession
 from core.languages import language_name, language_locale
-from core.voices import DEFAULT_VOICE
-from core.accents import accent_instruction, DEFAULT_ACCENT
-from core.styles import style_instruction, DEFAULT_STYLE
-from core.pace import pace_instruction, DEFAULT_PACE
+from core.voices import DEFAULT_VOICE, resolve_voice_name
+from core.accents import accent_instruction, accent_name, DEFAULT_ACCENT, resolve_accent
+from core.styles import style_instruction, style_name, DEFAULT_STYLE, resolve_style
+from core.pace import pace_instruction, pace_name, DEFAULT_PACE, resolve_pace
 from core.user_context import get_user_context
 
 from actions.file_processor import file_processor

@@ -52,6 +52,20 @@ def is_valid_voice(name: str) -> bool:
     return name in _NAMES
 
 
+def resolve_voice_name(name: str) -> str | None:
+    """Case-insensitive lookup — returns the canonical catalog name (correct
+    TitleCase) for a voice, or None if it isn't a recognized Gemini voice.
+    Used by the change_voice tool, since LLM-supplied text won't reliably
+    match the catalog's exact casing."""
+    if not name:
+        return None
+    lname = name.strip().lower()
+    for n in _NAMES:
+        if n.lower() == lname:
+            return n
+    return None
+
+
 # ── OpenAI Realtime voice catalog ────────────────────────────────────────────
 # Source: OpenAI's gpt-realtime voice list (marin/cedar are the newest,
 # OpenAI-recommended pair; the rest are the legacy eight). These names are

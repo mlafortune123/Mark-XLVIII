@@ -40,3 +40,15 @@ def accent_name(code: str) -> str | None:
 def accent_instruction(code: str) -> str | None:
     entry = _BY_CODE.get(code)
     return entry[1] if entry else None
+
+
+def resolve_accent(text: str) -> str | None:
+    """Case-insensitive lookup by code or display name (e.g. 'British' or
+    'british') — returns the canonical code, or None if unrecognized."""
+    if not text:
+        return None
+    t = text.strip().lower()
+    for code, name, _instr in SUPPORTED_ACCENTS:
+        if t == code.lower() or t == name.lower():
+            return code
+    return None
