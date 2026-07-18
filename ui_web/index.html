@@ -8,7 +8,7 @@
 </head>
 <body>
 <div id="root">
-  <matrix-rain opacity="0.14"></matrix-rain>
+  <matrix-rain opacity="0.20"></matrix-rain>
   <div id="vignette"></div>
 
   <div id="topbar">
@@ -16,7 +16,10 @@
       <div class="diamond"></div>
       <span class="mono brand-label">STARK INDUSTRIES</span>
     </div>
-    <div class="title">J.A.R.V.I.S</div>
+    <div class="title-wrap">
+      <div class="title">J.A.R.V.I.S</div>
+      <div class="subtitle mono">Just A Rather Very Intelligent System</div>
+    </div>
     <div class="right">
       <div>
         <div id="clock" class="mono"></div>
@@ -47,10 +50,10 @@
         <div class="micro-label mono">SYSTEM</div>
         <div id="statsList"></div>
         <div class="hairline"></div>
-        <div class="kv-rows mono">
-          <div class="kv-row"><span>UPTIME</span><span class="kv-val" id="kvUptime">00:00</span></div>
-          <div class="kv-row"><span>PROC</span><span class="kv-val" id="kvProc">--</span></div>
-          <div class="kv-row"><span>OS</span><span class="kv-val" id="kvOs">--</span></div>
+        <div class="kv-tiles mono">
+          <div class="kv-tile"><span class="kv-tile-label">UPTIME</span><span class="kv-tile-val" id="kvUptime">00:00</span></div>
+          <div class="kv-tile"><span class="kv-tile-label">PROC</span><span class="kv-tile-val" id="kvProc">--</span></div>
+          <div class="kv-tile"><span class="kv-tile-label">OS</span><span class="kv-tile-val" id="kvOs">--</span></div>
         </div>
       </div>
       <div id="activityCard" class="glass">
@@ -75,7 +78,13 @@
       <div id="sendBtn"><div class="tri"></div></div>
     </div>
     <div id="muteBtn" class="circle-btn glass" title="Mute [F4]">
-      <div class="mute-ring"><div class="mute-slash"></div></div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+        <line x1="12" y1="19" x2="12" y2="23"></line>
+        <line x1="8" y1="23" x2="16" y2="23"></line>
+        <line class="mute-slash" x1="3" y1="2" x2="21" y2="22"></line>
+      </svg>
     </div>
     <div id="interruptBtn" class="circle-btn glass" title="Interrupt [Esc]">
       <div class="bar"></div><div class="bar"></div>

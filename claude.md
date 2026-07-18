@@ -602,3 +602,4 @@ repo style, not an oversight; don't "fix" it as a drive-by refactor.
     actually broke it.
 
 PUT ANY PLANS YOU MAKE INTO THE PLANS FOLDER
+WHEN BUGFIXING: ADD DEBUG LOGS IF THE INPUT/PROBLEM IS UNCLEAR, REMOVE WHEN DONE BUGFIXING

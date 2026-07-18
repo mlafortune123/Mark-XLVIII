@@ -434,6 +434,48 @@ _STATIC_TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "change_voice",
+        "description": (
+            "Changes JARVIS's own speaking voice, accent, delivery style, and/or pace. "
+            "Call this whenever the user asks to change how you sound — e.g. 'change your "
+            "voice to X', 'switch back to the british guy', 'sound more casual', 'talk faster'. "
+            "Say voice='jarvis' for JARVIS's own signature default voice/persona — a "
+            "knowledgeable-sounding voice named Sadaltager, with a British (Received "
+            "Pronunciation) English accent and a professional newscaster delivery style — "
+            "this is what the user means by phrases like 'the british guy', 'your normal "
+            "voice', or 'change back to jarvis'. Any parameter you omit is left unchanged, "
+            "except voice='jarvis' which sets all four (voice, accent, style, pace) at once. "
+            "Changing the voice itself requires a brief reconnect (a few seconds); accent/"
+            "style/pace apply immediately without one."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "voice": {
+                    "type": "STRING",
+                    "description": (
+                        "'jarvis' for JARVIS's own default voice, or one of the Gemini "
+                        "prebuilt voice names (e.g. Charon, Puck, Kore, Sadaltager). "
+                        "Omit to leave the voice unchanged."
+                    )
+                },
+                "accent": {
+                    "type": "STRING",
+                    "description": "default | british | american | australian | indian | irish | scottish"
+                },
+                "style": {
+                    "type": "STRING",
+                    "description": "default | newscaster | casual | cheerful | calm | formal"
+                },
+                "pace": {
+                    "type": "STRING",
+                    "description": "default | very_slow | slow | fast | very_fast"
+                },
+            },
+            "required": []
+        }
+    },
+    {
         "name": "search_memory",
         "description": (
             "Searches the user's long-term memory vault for things you know about them that "
@@ -455,6 +497,17 @@ _STATIC_TOOL_DECLARATIONS = [
 ]
 
 TOOL_DECLARATIONS = _STATIC_TOOL_DECLARATIONS + all_declarations()
+
+# The voice/accent/style/pace combo meant by voice='jarvis' in the
+# change_voice tool — JARVIS's own signature default persona. Keep in sync
+# with memory/vault_manager.py::DEFAULT_SETTINGS, which is what a brand-new
+# vault gets written with.
+JARVIS_DEFAULT_VOICE_PROFILE = {
+    "voice":  "Sadaltager",
+    "accent": "british",
+    "style":  "newscaster",
+    "pace":   "default",
+}
 
 # --- Plugin system ---
 
@@ -480,6 +533,8 @@ class JarvisLive:
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
+        self._session_task     = None   # asyncio.Task wrapping the current session's TaskGroup — see run()
+        self._reconnect_pending = False  # True once a queued voice reconnect has cancelled _session_task
 
     def _make_remote_key(self):
         """Called from Qt main thread when user presses Remote Control."""
@@ -521,6 +576,93 @@ class JarvisLive:
             self._voice_session.send_text(directive, turn_complete=True),
             self._loop
         )
+
+    async def _change_voice(self, args: dict) -> str:
+        """Handles the change_voice tool — updates voice/accent/style/pace
+        settings (persisted via vault_manager, same store the Preferences
+        panel writes to). voice='jarvis' resolves to JARVIS_DEFAULT_VOICE_PROFILE.
+        A voice change requires a reconnect (voice is connect-time-locked on
+        both backends — see CLAUDE.md gotcha 7); accent/style/pace apply
+        immediately as a prompt directive, same mechanism as _on_settings_saved."""
+        voice_arg  = (args.get("voice") or "").strip()
+        accent_arg = (args.get("accent") or "").strip()
+        style_arg  = (args.get("style") or "").strip()
+        pace_arg   = (args.get("pace") or "").strip()
+
+        update: dict = {}
+        if voice_arg.lower() == "jarvis":
+            update.update(JARVIS_DEFAULT_VOICE_PROFILE)
+        elif voice_arg:
+            canon = resolve_voice_name(voice_arg)
+            if not canon:
+                return f"'{voice_arg}' isn't a voice I recognize — leaving the voice unchanged."
+            update["voice"] = canon
+
+        # Explicit accent/style/pace passed alongside voice='jarvis' override
+        # that profile's defaults (e.g. "jarvis but faster").
+        if accent_arg:
+            code = resolve_accent(accent_arg)
+            if code is None:
+                return f"'{accent_arg}' isn't an accent I recognize."
+            update["accent"] = code
+        if style_arg:
+            code = resolve_style(style_arg)
+            if code is None:
+                return f"'{style_arg}' isn't a speaking style I recognize."
+            update["style"] = code
+        if pace_arg:
+            code = resolve_pace(pace_arg)
+            if code is None:
+                return f"'{pace_arg}' isn't a pace I recognize."
+            update["pace"] = code
+
+        if not update:
+            return "No voice, accent, style, or pace was specified."
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: vault_manager.save_settings(update))
+
+        parts = []
+        if "voice" in update:
+            parts.append(f"voice to {update['voice']}")
+        if "accent" in update:
+            parts.append(f"accent to {accent_name(update['accent']) or update['accent']}")
+        if "style" in update:
+            parts.append(f"delivery style to {style_name(update['style']) or update['style']}")
+        if "pace" in update:
+            parts.append(f"pace to {pace_name(update['pace']) or update['pace']}")
+        summary = "Updated " + ", ".join(parts) + "."
+
+        if "voice" in update:
+            if self._voice_session is not None:
+                asyncio.create_task(self._await_reconnect(self._voice_session))
+                summary += " Reconnecting now to apply the new voice — one moment."
+        elif self._voice_session is not None:
+            # Accent/style/pace have no structured API field — they only take
+            # effect as a conversational directive (see _on_settings_saved).
+            self._on_settings_saved()
+
+        return summary
+
+    async def _await_reconnect(self, session: LiveVoiceSession) -> None:
+        """Waits for the in-flight confirmation turn to finish speaking, then
+        cancels the current session so main.py's run() loop reconnects with
+        the freshly-saved voice preference. Cancelling _session_task tears
+        down its whole TaskGroup (session.run() plus the monitor/proactive/
+        digest tasks), which run() re-creates on the next while-loop pass —
+        same pattern as its existing API-key-reconfigure path, just
+        self-triggered instead of error-triggered."""
+        await asyncio.sleep(0.5)  # let the confirmation reply start speaking
+        for _ in range(100):      # ~20s cap in case is_speaking() gets stuck
+            if not session.is_speaking():
+                break
+            await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)  # small buffer after audio actually ends
+
+        task = self._session_task
+        if task is not None and not task.done():
+            self._reconnect_pending = True
+            task.cancel()
 
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
@@ -686,6 +828,12 @@ class JarvisLive:
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return "ok"
+
+        if name == "change_voice":
+            result = await self._change_voice(args)
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return result
 
         if name == "search_memory":
             query    = args.get("query", "")
@@ -881,10 +1029,12 @@ class JarvisLive:
 
     async def _send_startup_briefing(self) -> None:
         """
-        Two/three-phase briefing for instant perceived response:
-          Phase 1 — immediate greeting (no tools, no fetch) → Jarvis speaks in <2s
-          Phase 2 — news fetched in background, injected after greeting finishes (if enabled)
-          Phase 3 — weather fetched in background (if enabled)
+        Greets the user and, if they have news/weather offered in
+        Preferences, asks whether they'd like it — it does NOT fetch or
+        speak anything automatically. News/weather only get spoken if the
+        user affirms in their next turn, at which point the live model
+        decides that itself and calls web_search/weather_report normally
+        (see [STARTUP_BRIEFING] handling in core/prompt.txt).
         """
         await asyncio.sleep(0.3)
         if not self._voice_session:
@@ -892,8 +1042,7 @@ class JarvisLive:
 
         prefs           = vault_manager.get_settings()
         want_news       = prefs.get("startup_news", True)
-        want_weather    = prefs.get("startup_weather", False)
-        weather_city    = get_user_context().city or ""
+        want_weather    = prefs.get("startup_weather", False) and bool(get_user_context().city)
 
         # ── memory ───────────────────────────────────────────────────────────
         lang = self._preferred_language() or vault_manager.get_identity_field("language")
@@ -902,87 +1051,26 @@ class JarvisLive:
         from datetime import datetime
         time_str = datetime.now().strftime("%H:%M")
 
-        # ── Phase 1: instant greeting — one simple sentence ──────────────────
         lang_clause = f" Respond in {lang}." if lang else ""
         name_clause = f" Address the user as {name}." if name else ""
-        news_clause = " and say you are fetching today's news headlines now" if want_news else ""
+
+        if want_news and want_weather:
+            offer_clause = " Then ask if they'd like their morning news and weather update."
+        elif want_news:
+            offer_clause = " Then ask if they'd like their morning news update."
+        elif want_weather:
+            offer_clause = " Then ask if they'd like today's weather."
+        else:
+            offer_clause = ""
+
         p1 = (
-            f"Greet the user, mention it is {time_str}{news_clause}. "
-            f"One short sentence only. Do not call any tools.{lang_clause}{name_clause}"
+            f"[STARTUP_BRIEFING] Greet the user and mention it is {time_str}.{offer_clause} "
+            f"One short greeting sentence{' plus the question' if offer_clause else ''}. "
+            f"Do not call any tools yet.{lang_clause}{name_clause}"
         )
 
         await self._voice_session.send_text(p1, turn_complete=True)
-        self.ui.write_log("SYS: Briefing phase 1 (greeting) sent.")
-
-        # ── Phase 2: fetch news in background, deliver after greeting plays ───
-        if want_news:
-            async def _guarded_news():
-                try:
-                    await self._briefing_news_phase(lang)
-                except Exception as e:
-                    print(f"[Briefing] Phase 2 error: {e}")
-                    self.ui.write_log(f"SYS: Briefing news phase failed: {e}")
-            asyncio.create_task(_guarded_news())
-
-        # ── Phase 3: fetch weather in background ──────────────────────────────
-        if want_weather and weather_city:
-            async def _guarded_weather():
-                try:
-                    await self._briefing_weather_phase(weather_city, lang)
-                except Exception as e:
-                    print(f"[Briefing] Phase 3 error: {e}")
-                    self.ui.write_log(f"SYS: Briefing weather phase failed: {e}")
-            asyncio.create_task(_guarded_weather())
-
-    async def _briefing_news_phase(self, lang: str) -> None:
-        """
-        Sends phase-2 (news) to Gemini ~1.5 s after phase-1 is dispatched so
-        Gemini starts working on it while phase-1 audio is still playing.
-        """
-        lang_str = f" Respond in {lang}." if lang else ""
-
-        # 1.5 s is enough for Gemini to finish generating phase-1 audio on its
-        # side (turn_complete) while the greeting is still being played locally.
-        await asyncio.sleep(1.5)
-
-        if not self._voice_session:
-            return
-
-        topics = await asyncio.to_thread(vault_manager.list_followed_topics)
-        topics_clause = (
-            f" The user follows these topics — weight the news toward them if relevant: {', '.join(topics)}."
-            if topics else ""
-        )
-        p2 = (
-            "[BRIEFING] Call web_search with mode='news' and query='top world news today' "
-            "to find actual recent news articles with real event headlines (not just website names)."
-            f"{topics_clause} "
-            "After the search, say ONE specific news event from the results in one sentence, "
-            f"then say the full list is displayed on screen.{lang_str}"
-        )
-
-        await self._voice_session.send_text(p2, turn_complete=True)
-        self.ui.write_log("SYS: Briefing phase 2 (news) sent.")
-
-    async def _briefing_weather_phase(self, city: str, lang: str) -> None:
-        """
-        Sends phase-3 (weather) to Gemini a couple seconds after phase-1 so it
-        doesn't collide with the phase-2 news audio.
-        """
-        lang_str = f" Respond in {lang}." if lang else ""
-
-        await asyncio.sleep(3.0)
-
-        if not self._voice_session:
-            return
-
-        p3 = (
-            f"[BRIEFING] Call weather_report with city='{city}' to show today's weather, "
-            f"then say the current conditions for {city} in one short sentence.{lang_str}"
-        )
-
-        await self._voice_session.send_text(p3, turn_complete=True)
-        self.ui.write_log("SYS: Briefing phase 3 (weather) sent.")
+        self.ui.write_log("SYS: Startup greeting sent.")
 
     # ── System monitor ──────────────────────────────────────────────────────────
 
@@ -1272,18 +1360,28 @@ class JarvisLive:
                     )
                 voice_session.on_connected = lambda vs=voice_session: self._on_voice_session_connected(vs)
 
-                async with asyncio.TaskGroup() as tg:
-                    tg.create_task(voice_session.run())
-                    tg.create_task(self._run_system_monitor())
-                    tg.create_task(self._run_proactive_mode())
-                    tg.create_task(self._run_topic_digest())
-                    if self._dashboard:
-                        tg.create_task(self._relay_phone_audio())
+                async def _run_session_group():
+                    async with asyncio.TaskGroup() as tg:
+                        tg.create_task(voice_session.run())
+                        tg.create_task(self._run_system_monitor())
+                        tg.create_task(self._run_proactive_mode())
+                        tg.create_task(self._run_topic_digest())
+                        if self._dashboard:
+                            tg.create_task(self._relay_phone_audio())
 
-                    # Morning briefing — fires once per process launch
-                    if not self._briefing_sent:
-                        self._briefing_sent = True
-                        tg.create_task(self._send_startup_briefing())
+                        # Morning briefing — fires once per process launch
+                        if not self._briefing_sent:
+                            self._briefing_sent = True
+                            tg.create_task(self._send_startup_briefing())
+
+                # Wrapped in its own Task (rather than awaited inline) so
+                # _change_voice()/_await_reconnect() can force a clean
+                # reconnect by cancelling exactly this task — cancelling the
+                # task that owns an `async with TaskGroup()` cancels every
+                # child in the group too, and run() re-creates them all on
+                # the next while-loop pass with freshly re-read settings.
+                self._session_task = asyncio.create_task(_run_session_group())
+                await self._session_task
 
             except KeyboardInterrupt:
                 raise
@@ -1295,37 +1393,50 @@ class JarvisLive:
                 # externally, which `except Exception` would miss, letting the
                 # exception escape the while-loop and causing asyncio.run() to
                 # start shutdown — resulting in "executor after shutdown" errors).
-                err_str = str(e)
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()
-
-                # Invalid API key — stop hammering the API, prompt re-configuration
-                if "API key not valid" in err_str or "1007" in err_str:
-                    self.ui.write_log("ERR: API key invalid — please re-enter your key.")
-                    self.ui.set_state("SLEEPING")
-                    self.ui.prompt_reconfig()
-                    while not self.ui.is_ready:
-                        await asyncio.sleep(1)
-                    print("[JARVIS] New API key saved — reconnecting...")
-                    _conn_backoff = 3
-                    continue
-
-                # Network / timeout errors — log clearly and back off
-                is_net_err = any(k in err_str for k in (
-                    "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
-                    "ConnectionRefusedError", "OSError", "Cannot connect",
-                ))
-                if is_net_err:
-                    _conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
-                    self._conn_backoff = _conn_backoff
-                    self.ui.write_log(
-                        f"NET: Bağlantı kurulamadı — {_conn_backoff}s sonra tekrar deneniyor. "
-                        "(VPN gerekiyor olabilir)"
-                    )
+                # This also covers _await_reconnect()'s self-triggered cancel
+                # (self._reconnect_pending is set right before that cancel()),
+                # since a deliberately cancelled TaskGroup can surface as either
+                # a plain CancelledError or a BaseExceptionGroup depending on
+                # timing — checking the flag instead of the exception shape
+                # handles both.
+                if self._reconnect_pending:
+                    self._reconnect_pending = False
+                    print("[JARVIS] Reconnecting to apply new voice settings...")
+                    self.ui.write_log("SYS: Applying new voice — reconnecting...")
+                    self._conn_backoff = 0
                 else:
-                    self._conn_backoff = 3
+                    err_str = str(e)
+                    print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                    traceback.print_exc()
+
+                    # Invalid API key — stop hammering the API, prompt re-configuration
+                    if "API key not valid" in err_str or "1007" in err_str:
+                        self.ui.write_log("ERR: API key invalid — please re-enter your key.")
+                        self.ui.set_state("SLEEPING")
+                        self.ui.prompt_reconfig()
+                        while not self.ui.is_ready:
+                            await asyncio.sleep(1)
+                        print("[JARVIS] New API key saved — reconnecting...")
+                        _conn_backoff = 3
+                        continue
+
+                    # Network / timeout errors — log clearly and back off
+                    is_net_err = any(k in err_str for k in (
+                        "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
+                        "ConnectionRefusedError", "OSError", "Cannot connect",
+                    ))
+                    if is_net_err:
+                        _conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
+                        self._conn_backoff = _conn_backoff
+                        self.ui.write_log(
+                            f"NET: Bağlantı kurulamadı — {_conn_backoff}s sonra tekrar deneniyor. "
+                            "(VPN gerekiyor olabilir)"
+                        )
+                    else:
+                        self._conn_backoff = 3
             finally:
                 self._voice_session = None
+                self._session_task  = None
 
             self.ui.set_state("SLEEPING")
 

@@ -1,3 +1,7 @@
+source .venv/bin/activate
+  pyinstaller mark48-mac.spec
+  ./scripts/build_dmg.sh
+
 # ⚙️ MARK XLVIII (48)
 ### The Ultimate Cross-Platform Personal AI Assistant — By TechInATux
 

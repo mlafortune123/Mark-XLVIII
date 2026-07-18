@@ -95,9 +95,9 @@
   // ---- stats ----
   function renderStats(stats) {
     els.statsList.innerHTML = '';
-    (stats || []).forEach((s) => {
+    (stats || []).filter((s) => !s.na).forEach((s) => {
       const meta = STAT_META[s.label] || {};
-      const color = s.na ? 'rgba(170,210,240,0.4)' : (s.warn ? (meta.warnColor || '#ffb454') : meta.color);
+      const color = s.warn ? (meta.warnColor || '#ffb454') : meta.color;
       const row = document.createElement('div');
       row.className = 'stat-row';
       row.innerHTML = `
@@ -114,6 +114,9 @@
 
   function applyMetrics(m) {
     if (!m) return;
+    if (typeof m === 'string') {
+      try { m = JSON.parse(m); } catch (e) { return; }
+    }
     renderStats(m.stats || []);
     if (m.uptime != null) els.kvUptime.textContent = m.uptime;
     if (m.proc != null) els.kvProc.textContent = m.proc;

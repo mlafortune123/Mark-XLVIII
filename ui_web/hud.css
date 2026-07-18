@@ -75,7 +75,7 @@ matrix-rain { position: absolute; inset: 0; }
 #topbar {
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: 64px;
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -97,11 +97,19 @@ matrix-rain { position: absolute; inset: 0; }
   font-size: 12px; letter-spacing: 5px;
   color: rgba(190,225,250,0.65);
 }
+#topbar .title-wrap {
+  display: flex; flex-direction: column; align-items: center;
+  margin-left: 14px;
+}
 #topbar .title {
   font-size: 20px; font-weight: 600; letter-spacing: 14px;
-  margin-left: 14px;
   color: #eaf6ff;
   text-shadow: 0 0 24px rgba(79,216,255,0.9), 0 0 48px rgba(60,180,255,0.5);
+}
+#topbar .subtitle {
+  font-size: 9px; font-weight: 400; letter-spacing: 2px;
+  color: rgba(180,225,255,0.5);
+  margin-top: 2px;
 }
 #topbar .right { text-align: right; display: flex; align-items: center; gap: 16px; }
 #topbar #clock { font-size: 19px; font-weight: 500; letter-spacing: 2px; color: #bfe8ff; }
@@ -167,18 +175,35 @@ matrix-rain { position: absolute; inset: 0; }
 }
 #rightColumn.collapsed { display: none; }
 
-#systemCard { padding: 22px 20px; display: flex; flex-direction: column; gap: 18px; }
+#systemCard { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 .micro-label { font-size: 10px; letter-spacing: 4px; color: rgba(160,210,245,0.5); }
-.stat-row { display: flex; flex-direction: column; gap: 7px; }
+.stat-row { display: flex; flex-direction: column; gap: 9px; }
 .stat-row .stat-head { display: flex; justify-content: space-between; align-items: baseline; }
 .stat-row .stat-label { font-size: 11px; letter-spacing: 2px; color: rgba(185,220,248,0.75); }
-.stat-row .stat-val { font-size: 13px; font-weight: 600; }
-.stat-bar-track { height: 3px; border-radius: 2px; background: rgba(120,190,255,0.12); overflow: hidden; }
-.stat-bar-fill { height: 100%; border-radius: 2px; transition: width .8s ease; }
+.stat-row .stat-val { font-size: 14px; font-weight: 700; }
+.stat-bar-track {
+  height: 10px; border-radius: 5px;
+  background: rgba(120,190,255,0.1);
+  border: 1px solid rgba(120,190,255,0.15);
+  overflow: hidden;
+}
+.stat-bar-fill { height: 100%; border-radius: 5px; transition: width .8s ease; }
 .hairline { height: 1px; background: rgba(140,200,255,0.1); }
-.kv-rows { display: flex; flex-direction: column; gap: 6px; font-size: 10px; letter-spacing: 2px; color: rgba(160,205,240,0.5); }
-.kv-rows .kv-row { display: flex; justify-content: space-between; }
-.kv-rows .kv-val { color: rgba(200,235,255,0.8); }
+.kv-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.kv-tiles .kv-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 10px 6px;
+  border-radius: 8px;
+  background: rgba(120,190,255,0.05);
+  border: 1px solid rgba(140,205,255,0.15);
+}
+.kv-tiles .kv-tile-label {
+  font-size: 9px; letter-spacing: 2px; color: rgba(110,220,255,0.7);
+}
+.kv-tiles .kv-tile-val {
+  font-size: 13px; font-weight: 600; color: rgba(225,245,255,0.92);
+}
 
 #activityCard { flex: 1; min-height: 0; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
 #activityCard .activity-head { display: flex; justify-content: space-between; align-items: center; }
@@ -271,29 +296,19 @@ matrix-rain { position: absolute; inset: 0; }
 }
 .circle-btn:hover { border-color: rgba(140,215,255,0.5); color: #bfeaff; }
 
-#muteBtn .mute-ring {
-  position: relative;
-  width: 14px; height: 14px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-}
-#muteBtn .mute-slash {
-  display: none;
-  position: absolute; left: -3px; top: 5px;
-  width: 20px; height: 1.5px;
-  background: currentColor;
-  transform: rotate(-45deg);
-}
+#muteBtn svg { width: 20px; height: 20px; }
+#muteBtn .mute-slash { display: none; }
 #muteBtn.muted {
   border: 1px solid rgba(255,100,125,0.45) !important;
   color: #ff7a90;
   box-shadow: 0 0 18px rgba(255,90,115,0.25);
 }
-#muteBtn.muted .mute-slash { display: block; }
+#muteBtn.muted .mute-slash { display: inline; }
 
 #interruptBtn { gap: 4px; }
 #interruptBtn .bar { width: 4px; height: 14px; border-radius: 1px; background: currentColor; }
 
+#remoteBtn { display: none; }
 #remoteBtn .diamond-outline {
   width: 11px; height: 11px;
   transform: rotate(45deg);

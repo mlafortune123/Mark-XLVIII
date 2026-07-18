@@ -24,6 +24,8 @@ loading relative to Python's early emits.
 
 from __future__ import annotations
 
+import json
+
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 _LOG_BUFFER_CAP = 200
@@ -34,7 +36,11 @@ class Bridge(QObject):
     logAppended   = pyqtSignal(str, str)   # (who, text) — who in {SYS, YOU, JARVIS}
     stateChanged  = pyqtSignal(str)        # raw state string, e.g. SPEAKING/LISTENING/THINKING/SLEEPING
     mutedChanged  = pyqtSignal(bool)
-    statsUpdated  = pyqtSignal(dict)       # {"stats": [...], "uptime": str, "proc": str, "os": str}
+    # JSON-encoded {"stats": [...], "uptime": str, "proc": str, "os": str} — sent as a
+    # str, not a dict: pyqtSignal(dict) with this nested list-of-dicts shape doesn't
+    # marshal cleanly through QWebChannel (JS ends up with the Python repr() string,
+    # not a usable object), so this is JSON-encoded manually instead.
+    statsUpdated  = pyqtSignal(str)
     remoteConnected = pyqtSignal()
 
     def __init__(self, window, parent=None):
@@ -61,7 +67,7 @@ class Bridge(QObject):
 
     def push_stats(self, payload: dict) -> None:
         self._last_stats = payload
-        self.statsUpdated.emit(payload)
+        self.statsUpdated.emit(json.dumps(payload))
 
     # ---- JS -> Python calls ----
     @pyqtSlot()
@@ -71,7 +77,7 @@ class Bridge(QObject):
         self.stateChanged.emit(self._last_state)
         self.mutedChanged.emit(self._last_muted)
         if self._last_stats is not None:
-            self.statsUpdated.emit(self._last_stats)
+            self.statsUpdated.emit(json.dumps(self._last_stats))
 
     @pyqtSlot(str)
     def sendText(self, text: str) -> None:

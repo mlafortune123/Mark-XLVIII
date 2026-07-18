@@ -197,7 +197,7 @@ class MatrixRain extends HTMLElement {
     this._resize = () => {
       this.canvas.width = this.clientWidth; this.canvas.height = this.clientHeight;
       this.cols = Math.ceil(this.clientWidth / 28);
-      this.drops = Array.from({ length: this.cols }, () => ({ y: Math.random() * this.clientHeight, s: 0.4 + Math.random() * 1.1 }));
+      this.drops = Array.from({ length: this.cols }, () => ({ y: Math.random() * this.clientHeight, s: 0.6 + Math.random() * 1.5 }));
     };
     this._resize();
     this._ro = new ResizeObserver(this._resize); this._ro.observe(this);
@@ -207,16 +207,16 @@ class MatrixRain extends HTMLElement {
   disconnectedCallback() { cancelAnimationFrame(this._raf); this._ro && this._ro.disconnect(); }
   _tick() {
     this._raf = requestAnimationFrame(this._tick);
-    if (document.hidden || this._frame++ % 3) return;
+    if (document.hidden || this._frame++ % 2) return;
     const { ctx, canvas } = this, op = parseFloat(this.getAttribute('opacity') || '0.10');
-    ctx.fillStyle = 'rgba(4,8,14,0.22)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(4,8,14,0.18)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.font = '13px ui-monospace,monospace';
     for (let i = 0; i < this.cols; i++) {
       const d = this.drops[i];
-      ctx.fillStyle = `rgba(110,205,255,${op * (0.5 + Math.random() * 0.5)})`;
+      ctx.fillStyle = `rgba(110,205,255,${op * (0.6 + Math.random() * 0.6)})`;
       ctx.fillText(String((Math.random() * 10) | 0), i * 28 + 8, d.y);
-      d.y += d.s * 14;
-      if (d.y > canvas.height + 20) { d.y = -20; d.s = 0.4 + Math.random() * 1.1; }
+      d.y += d.s * 16;
+      if (d.y > canvas.height + 20) { d.y = -20; d.s = 0.6 + Math.random() * 1.5; }
     }
   }
 }

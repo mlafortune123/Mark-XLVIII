@@ -88,8 +88,8 @@ class G:
     """Palette matching the new glass HUD (ui_web/hud.css) — used by the
     native Preferences overlay (OnboardingOverlay), the one Qt-widget
     surface still shown on top of the web-based main window."""
-    PANEL_BG   = "rgba(13, 23, 38, 235)"
-    PANEL_BG2  = "rgba(9, 17, 29, 235)"
+    PANEL_BG   = "rgba(6, 11, 19, 250)"
+    PANEL_BG2  = "rgba(4, 8, 14, 250)"
     BORDER     = "rgba(120, 210, 255, 70)"
     BORDER_HI  = "rgba(140, 215, 255, 130)"
     HAIRLINE   = "rgba(140, 200, 255, 40)"
@@ -99,7 +99,7 @@ class G:
     TEXT       = "#e8f4ff"
     TEXT_DIM   = "rgba(170, 215, 250, 145)"
     TEXT_FAINT = "rgba(160, 210, 245, 110)"
-    FIELD_BG   = "rgba(8, 16, 28, 200)"
+    FIELD_BG   = "rgba(3, 7, 13, 235)"
     GREEN      = "#54e6a8"
     AMBER      = "#ffb454"
 
@@ -930,17 +930,17 @@ class OnboardingOverlay(QWidget):
         ))
         layout.addSpacing(12)
 
-        start_btn = QPushButton("▸  START")
+        start_btn = QPushButton("▸  START" if not closable else "▸  SAVE")
         start_btn.setFont(QFont(jfonts.HEADER_BOLD_FAMILY, 10, QFont.Weight.Bold))
-        start_btn.setFixedHeight(36)
+        start_btn.setFixedHeight(38)
         start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         start_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
+                background: {G.ACCENT_GHO}; color: {G.ACCENT};
+                border: 1px solid {G.BORDER_HI}; border-radius: 12px;
             }}
             QPushButton:hover {{
-                background: {C.PRI_GHO}; border: 1px solid {C.PRI};
+                background: rgba(79, 216, 255, 55); border: 1px solid {G.ACCENT};
             }}
         """)
         start_btn.clicked.connect(self._submit)
@@ -951,8 +951,8 @@ class OnboardingOverlay(QWidget):
         skip_btn.setFlat(True)
         skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         skip_btn.setStyleSheet(f"""
-            QPushButton {{ background: transparent; color: {C.TEXT_DIM}; border: none; }}
-            QPushButton:hover {{ color: {C.TEXT}; }}
+            QPushButton {{ background: transparent; color: {G.TEXT_DIM}; border: none; }}
+            QPushButton:hover {{ color: {G.TEXT}; }}
         """)
         skip_btn.clicked.connect(self._cancel if closable else self._skip)
         layout.addWidget(skip_btn)
@@ -962,17 +962,17 @@ class OnboardingOverlay(QWidget):
             if k == selected:
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: {C.PRI}; color: #001a22;
-                        border: none; border-radius: 3px; font-weight: bold;
+                        background: {G.ACCENT}; color: #001522;
+                        border: none; border-radius: 10px; font-weight: bold;
                     }}
                 """)
             else:
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: #000d12; color: {C.TEXT_DIM};
-                        border: 1px solid {C.BORDER}; border-radius: 3px;
+                        background: {G.FIELD_BG}; color: {G.TEXT_DIM};
+                        border: 1px solid {G.BORDER}; border-radius: 10px;
                     }}
-                    QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
+                    QPushButton:hover {{ color: {G.TEXT}; border: 1px solid {G.BORDER_HI}; }}
                 """)
 
     def _sel_news_toggle(self, val: bool):
@@ -1782,7 +1782,8 @@ class MainWindow(QMainWindow):
         except Exception:
             proc = "--"
 
-        self._bridge.push_stats({"stats": stats, "uptime": uptime, "proc": proc, "os": _OS})
+        os_display = {"Darwin": "macOS"}.get(_OS, _OS)
+        self._bridge.push_stats({"stats": stats, "uptime": uptime, "proc": proc, "os": os_display})
 
     def _send_text(self, text: str) -> None:
         text = text.strip()
