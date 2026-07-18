@@ -3,7 +3,6 @@ PyQt6-WebEngine
 sounddevice
 PyYAML
 google-genai
-google-generativeai  # NOTE: appears unused (no `import google.generativeai` anywhere in the codebase) — confirm before removing
 openai
 anthropic
 pillow
