@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S</title>
+<link rel="stylesheet" href="hud.css">
+</head>
+<body>
+<div id="root">
+  <matrix-rain opacity="0.14"></matrix-rain>
+  <div id="vignette"></div>
+
+  <div id="topbar">
+    <div class="brand">
+      <div class="diamond"></div>
+      <span class="mono brand-label">STARK INDUSTRIES</span>
+    </div>
+    <div class="title">J.A.R.V.I.S</div>
+    <div class="right">
+      <div>
+        <div id="clock" class="mono"></div>
+        <div id="date" class="mono"></div>
+      </div>
+      <div id="prefsBtn" title="Preferences">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div id="headZone">
+    <div id="headInner">
+      <jarvis-head id="head" preset="reactor" activity="idle"></jarvis-head>
+      <div id="headOverlay">
+        <div id="headTitle">J.A.R.V.I.S</div>
+        <div id="statusLine" class="mono">STANDBY</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="rightWrap">
+    <div id="rightColumn">
+      <div id="systemCard" class="glass">
+        <div class="micro-label mono">SYSTEM</div>
+        <div id="statsList"></div>
+        <div class="hairline"></div>
+        <div class="kv-rows mono">
+          <div class="kv-row"><span>UPTIME</span><span class="kv-val" id="kvUptime">00:00</span></div>
+          <div class="kv-row"><span>PROC</span><span class="kv-val" id="kvProc">--</span></div>
+          <div class="kv-row"><span>OS</span><span class="kv-val" id="kvOs">--</span></div>
+        </div>
+      </div>
+      <div id="activityCard" class="glass">
+        <div class="activity-head">
+          <span class="micro-label mono">ACTIVITY</span>
+          <span id="activityDot"></span>
+        </div>
+        <div id="logList"></div>
+      </div>
+    </div>
+    <div id="chevronTab">&rsaquo;</div>
+  </div>
+
+  <div id="commandRow">
+    <div id="inputPill" class="glass glass-pill">
+      <div id="attachBtn" title="Attach file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+        </svg>
+      </div>
+      <input id="draftInput" class="mono" placeholder="Ask Jarvis anything&hellip;" autocomplete="off">
+      <div id="sendBtn"><div class="tri"></div></div>
+    </div>
+    <div id="muteBtn" class="circle-btn glass" title="Mute [F4]">
+      <div class="mute-ring"><div class="mute-slash"></div></div>
+    </div>
+    <div id="interruptBtn" class="circle-btn glass" title="Interrupt [Esc]">
+      <div class="bar"></div><div class="bar"></div>
+    </div>
+    <div id="remoteBtn" class="circle-btn glass" title="Remote control">
+      <div class="diamond-outline"></div>
+    </div>
+  </div>
+
+  <div id="bottombar">
+    <div class="cluster mono">
+      <span><span class="status-dot"></span>AI CORE ACTIVE</span>
+      <span>SEC CLEARED</span>
+      <span>TECH IN A TUX</span>
+    </div>
+    <div class="cluster mono">
+      <span id="micLabel">MIC LIVE</span>
+      <span>[F4] MUTE</span>
+      <span>[F11] FULLSCREEN</span>
+    </div>
+  </div>
+
+  <div id="dropHint" class="mono">RELEASE TO LOAD FILE</div>
+</div>
+
+<script src="jarvis-head.js"></script>
+<script src="qwebchannel.js"></script>
+<script src="hud.js"></script>
+</body>
+</html>

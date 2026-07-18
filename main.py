@@ -1304,7 +1304,7 @@ class JarvisLive:
                     self.ui.write_log("ERR: API key invalid — please re-enter your key.")
                     self.ui.set_state("SLEEPING")
                     self.ui.prompt_reconfig()
-                    while not self.ui._win._ready:
+                    while not self.ui.is_ready:
                         await asyncio.sleep(1)
                     print("[JARVIS] New API key saved — reconnecting...")
                     _conn_backoff = 3

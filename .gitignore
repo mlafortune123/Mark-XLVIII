@@ -38,3 +38,5 @@ memory/long_term.json*
 build/
 dist/
 installer_output/
+/newDesign
+/plans

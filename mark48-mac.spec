@@ -27,9 +27,18 @@ a = Analysis(
         # per click. Re-run scripts/generate_voice_previews.py before
         # cutting a release if this directory isn't all 30 voices yet.
         ('core/voice_previews', 'core/voice_previews'),
+        # Avengeance font pack (core/fonts.py) — personal-use license file
+        # (assets/fonts/avengeance/misc/) travels with it.
+        ('assets/fonts/avengeance', 'assets/fonts/avengeance'),
+        # HUD web assets (ui.py's QWebEngineView) — HTML/CSS/JS + vendored
+        # jarvis-head.js, qwebchannel.js, and IBM Plex Mono woff2 files.
+        ('ui_web', 'ui_web'),
     ],
     hiddenimports=[
         'PyQt6.sip',
+        'PyQt6.QtWebEngineWidgets',
+        'PyQt6.QtWebEngineCore',
+        'PyQt6.QtWebChannel',
     ],
     hookspath=[],
     hooksconfig={},
@@ -71,7 +80,7 @@ app = BUNDLE(
     coll,
     name='JARVIS.app',
     icon='config/jarvis.icns',
-    bundle_identifier='com.fatihmakes.jarvis',
+    bundle_identifier='com.TechInATux.jarvis',
     info_plist={
         'CFBundleShortVersionString': '48.0.0',
         'NSMicrophoneUsageDescription':

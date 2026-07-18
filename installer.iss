@@ -8,7 +8,7 @@
 #endif
 
 #define MyAppName "JARVIS"
-#define MyAppPublisher "FatihMakes"
+#define MyAppPublisher "TechInATux"
 #define MyAppExeName "JARVIS.exe"
 #define MySourceDir "dist\JARVIS"
 
