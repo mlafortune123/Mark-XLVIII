@@ -42,17 +42,27 @@ line-level changes.
     prompt text (persona, tone, per-turn language-detection rules, address
     conventions). Edited directly as plain text, not Python.
 
-- **`ui.py`** — the entire PyQt6 GUI (~2900 lines), single file. Structural
-  map:
-  - `JarvisUI` (~line 2850) — thin facade `main.py` talks to (`muted`,
-    `current_file`, `on_text_command`, etc.); wraps `MainWindow`.
-  - `MainWindow` (~line 1649) — the actual `QMainWindow`: HUD canvas, log
-    panel, header buttons (incl. the ⚙ **Preferences** button), overlay
-    lifecycle management. Thread-safe UI updates go through `pyqtSignal`s
-    (`_log_sig`, `_state_sig`, `_content_sig`, `_reconfig_sig`,
-    `_cam_frame_sig`, etc.) since voice/tool work runs off the Qt thread.
-  - `SetupOverlay` (~line 940) — first-run API-key/provider setup screen.
-  - `OnboardingOverlay` (~line 1168) — first-run **and** reopenable
+- **`ui.py`** — PyQt6 GUI shell (~2200 lines, single file — shrank from
+  ~3600 when the HUD moved to HTML/CSS/JS, see "Web-based HUD" below).
+  Structural map:
+  - `JarvisUI` (~line 2058) — thin facade `main.py` and every `actions/*`
+    module talk to (`muted`, `current_file`, `on_text_command`,
+    `write_log`, `set_state`, `show_content`, `is_ready`, etc.); wraps
+    `MainWindow`. **This facade's public surface did not change** in the
+    QWebEngineView migration — only `MainWindow`'s internals did — so
+    nothing in `actions/` needed touching.
+  - `MainWindow` (~line 1285) — the actual `QMainWindow`. Its central
+    widget is now a `QWebEngineView` (see "Web-based HUD" below); it also
+    owns overlay lifecycle (setup/onboarding/remote-QR/camera windows) and
+    the header ⚙ **Preferences** trigger (now a gear icon inside the web
+    page, wired via the bridge — not a native `QPushButton` anymore).
+    Thread-safe UI updates still go through `pyqtSignal`s (`_log_sig`,
+    `_state_sig`, `_content_sig`, `_reconfig_sig`, `_cam_frame_sig`, etc.)
+    since voice/tool work runs off the Qt thread — these now feed into
+    `ui_web_bridge.py::Bridge`'s `push_*()` methods instead of mutating
+    native widgets directly.
+  - `SetupOverlay` (~line 412) — first-run API-key/provider setup screen.
+  - `OnboardingOverlay` (~line 642) — first-run **and** reopenable
     Preferences panel (news/weather/topics/language/voice). Takes
     `initial: dict | None` to pre-fill on reopen and `closable: bool` to
     switch its bottom button between "Skip for now" (first run) and
@@ -67,12 +77,174 @@ line-level changes.
     force-mutes the mic for as long as the panel is open (restored to
     whatever it was before, on close via `_close_preferences()`) — see
     gotcha 8 below for why.
+  - `RemoteKeyOverlay` (~line 1057) — remote/QR pairing window.
+  - `_CameraPreview` (~line 285) / `_CameraStreamWindow` (~line 352) —
+    native camera snapshot preview and live-stream panel; unchanged from
+    the pre-redesign implementation (reuses `actions/screen_processor.py`'s
+    `_cam_loop` as-is).
+  - **All five of the above are top-level floating windows, not
+    widgets stacked under `centralWidget()`** — `_make_floating()`
+    (~line 1690) applies `Qt.WindowType.Window | FramelessWindowHint |
+    WindowStaysOnTopHint` (+`Tool` for the camera preview) and
+    `WA_TranslucentBackground`. This is a deliberate consequence of the
+    QWebEngineView migration: child-widget compositing over a
+    `QWebEngineView` is unreliable in Qt (a known limitation), so every
+    overlay/dialog became a genuine top-level window instead, repositioned
+    off `self.geometry()` (screen coordinates) in `resizeEvent`/
+    `moveEvent` via `_reposition_floats()` rather than parent-local
+    coordinates.
   - `_close_overlay()` helper on `MainWindow` — **always** call this before
     swapping `self._overlay` to a new overlay. See gotcha below.
-  - `HudCanvas`, `MetricBar`, `_SysMetrics` — the animated waveform/HUD and
-    live CPU/RAM/GPU telemetry widgets.
-  - `FileDropZone` / `_DropCanvas` — drag-and-drop file target used by
-    `actions/file_processor.py`.
+  - `_browse_for_file()` (~line 1829) — native `QFileDialog.getOpenFileName`
+    triggered by the web page's paperclip/attach icon via
+    `Bridge.requestFileDialog()`. Drag-and-drop is separate and native:
+    `MainWindow.dragEnterEvent`/`dropEvent` are wired directly on the
+    window itself (not a transparent overlay widget — simpler and avoids
+    `WA_TransparentForMouseEvents` potentially also blocking drop
+    delivery), both paths funnel into `_on_file_selected(path)`.
+  - `_SysMetrics` — live CPU/RAM/GPU/temp telemetry polling (still native
+    Python/Qt); it feeds the web HUD's stat tiles via `statsUpdated`, see
+    below.
+  - **Deleted in the redesign, do not go looking for these**: `HudCanvas`,
+    `MetricBar`, `LogWidget`, `FileDropZone`, `_DropCanvas` — the HUD
+    canvas/waveform, metric bars, log panel, and drag-drop widget were all
+    native `QWidget`/`QPainter` code, fully replaced by the HTML/CSS/JS
+    page below. `actions/file_processor.py` still receives files the same
+    way (via the `JarvisUI` facade), it just no longer has a
+    `FileDropZone` backing it.
+
+### Web-based HUD (`ui_web/`)
+
+The entire HUD surface — waveform/head visualization, log panel, header
+buttons, command row (mic/interrupt/remote/attach/send), stat tiles — is
+now a single HTML/CSS/JS page, **not** native PyQt widgets. `MainWindow`
+(`ui.py` ~line 1285) just hosts a `QWebEngineView` pointed at
+`ui_web/index.html` (loaded via `QUrl.fromLocalFile`, so relative asset
+paths resolve normally) and bridges to it with a `QWebChannel`.
+
+- **`ui_web/index.html`** — DOM structure. Buttons that need a crisp icon
+  use **inline SVG** (`viewBox="0 0 24 24" fill="none" stroke="currentColor"`,
+  `stroke-width` 1.6–1.8), not CSS-drawn shapes or emoji — see `#prefsBtn`
+  (gear), `#attachBtn` (paperclip), `#muteBtn` (mic). This is the
+  established convention for any new icon button in this file; prefer it
+  over hand-built div/border shapes (the mute button was originally a
+  CSS ring+diagonal-slash div and was replaced with a proper Feather-style
+  mic SVG for exactly this reason — plain borders read as an abstract
+  "no" icon, not a microphone). `currentColor` is what lets `color`
+  changes (e.g. `#muteBtn.muted` turning red) restyle the icon without
+  touching the SVG itself.
+- **`ui_web/hud.css`** — all styling. `.circle-btn` (56px, `border-radius:
+  50%`, flex-centered) is the shared shell for the mic/interrupt/remote
+  buttons in `#commandRow`; icon-specific sizing/color rules live under an
+  `#idSelector` block per button, generally near the bottom of the file
+  (search for the button's `id`, not a class, since most command-row
+  icons are one-offs).
+  - **Pattern: hide (don't remove) a button that still has live JS
+    wiring.** To hide `#remoteBtn` without touching `hud.js` (which holds
+    a `$('#remoteBtn')` reference, a `click` listener calling
+    `bridge.clickRemote()`, and a `bridge.remoteConnected` signal handler
+    that toggles a `.connected` class on it), the fix was a single
+    `#remoteBtn { display: none; }` rule in `hud.css`, leaving the
+    element and all JS untouched. Removing the element from `index.html`
+    instead would throw on `$('#remoteBtn')` being `null` the moment
+    `hud.js` tries to `addEventListener` on it — `hud.js` doesn't
+    null-guard any of its `els.*` lookups.
+  - Mute button's muted-state slash is a `<line class="mute-slash">`
+    inside the SVG, toggled via `#muteBtn.muted .mute-slash { display:
+    inline; }` (SVG children default to `display: none` only when
+    explicitly set — plain CSS `display` works fine on SVG `<line>` in
+    Chromium/QtWebEngine).
+- **`ui_web/hud.js`** — single IIFE, no framework. `els` (top of file) is
+  a flat `id → element` lookup table built once via `document.querySelector`
+  with **no null-checks** — adding a button to `index.html` without a
+  matching `els.foo: $('#foo')` entry (or vice versa) fails loudly at
+  first use, not silently. State (`muted`, `rightOpen`, `activity`, `log`)
+  is a plain object mutated directly, not reactive — every state change
+  has a matching explicit `render*()`/`apply*()` call right next to it.
+  - **Qt↔JS bridge**: `connectBridge()` opens a `QWebChannel` and binds
+    `channel.objects.bridge` (the Python-side `QObject` exposed by
+    `ui.py`) to the local `bridge` var. Python→JS is Qt signals
+    (`logAppended`, `stateChanged`, `mutedChanged`, `statsUpdated`,
+    `remoteConnected`) connected to `hud.js` handlers; JS→Python is plain
+    method calls on `bridge` (`sendText`, `toggleMute`, `clickInterrupt`,
+    `clickRemote`, `requestFileDialog`, `openPreferences`,
+    `toggleFullscreen`, `requestSync`). If
+    `QWebChannel`/`qt.webChannelTransport` isn't present (e.g. the page
+    opened directly in a regular browser for CSS/layout iteration, as
+    opposed to inside the app), `connectBridge()` falls back to
+    `runPreviewMode()` — dummy data, no Python calls — which is what makes
+    it safe to open `ui_web/index.html` standalone in a browser to preview
+    a CSS/markup change without booting the whole app.
+  - Keyboard shortcuts (F4 mute, F11 fullscreen, Esc interrupt) are
+    handled **in JS**, not as native `QShortcut`s on `MainWindow` — a
+    `QWebEngineView` owning keyboard focus
+    swallows native shortcuts (Chromium-embedding quirk), so they're
+    forwarded to `bridge` from a `window.addEventListener('keydown', ...)`
+    here instead.
+
+### Glass design system — `ui_web/hud.css` palette, and where it leaks into native Qt
+
+The redesign ("new ui" commit) established a dark-navy/cyan **glass** look:
+translucent panels (`background: rgba(15,32,52,0.55)` + `backdrop-filter:
+blur(28px) saturate(1.6)`), a `rgba(120,210,255,0.26)` hairline border,
+22px corner radius, and a `#4fd8ff` accent (`hud.css`'s `.glass` class,
+`:root { --pbg; --pblur; --pbd; }`). Body font is `IBM Plex Mono`
+(`hud.css` `@font-face`, `ui_web/fonts/*.woff2`), not a system font.
+
+**Only one native Qt surface still needs to visually match this palette:
+`OnboardingOverlay` (`ui.py`)** — the Preferences panel opened via the ⚙
+button (`#prefsBtn` → `bridge.openPreferences()` → `MainWindow._show_preferences()`).
+It's a real `QWidget`, not part of the web page, so it can't use `hud.css`
+directly or get actual `backdrop-filter` blur (Qt stylesheets have no
+equivalent — the "glass" look here is approximated with a near-opaque
+tinted background, not real blur-through). `SetupOverlay` and
+`RemoteKeyOverlay` are the other native overlays but were **not** ported
+to this palette (still on the old flat-black/`C.PRI` cyan retro-terminal
+look from before the redesign) — deliberate scope cut, not an oversight;
+redo them the same way if full consistency is ever wanted.
+
+- **`class G` (`ui.py`, right after `class C`)** — the glass palette,
+  hand-translated from `hud.css`'s CSS-alpha (`rgba(r,g,b,0–1)`) to Qt
+  stylesheet syntax (`rgba(r,g,b,0–255)`) since Qt's `rgba()` alpha channel
+  is 0–255, not a 0–1 fraction — copying a `hud.css` value verbatim
+  without converting the alpha will silently render far more opaque/
+  transparent than intended. `G.PANEL_BG`/`G.FIELD_BG` are intentionally
+  **more opaque** than `hud.css`'s `--pbg` (near-black, alpha ~250/255)
+  rather than matching its ~0.55 alpha — with no real blur behind it, a
+  CSS-accurate translucency read as low-contrast/hard-to-read text over
+  whatever the floating window happened to be layered on, so the native
+  version leans darker/near-opaque purely for legibility, breaking strict
+  palette fidelity on purpose. If `hud.css`'s panel alpha values change,
+  don't blindly re-sync `G`'s alphas to match — re-check readability first.
+- Only `OnboardingOverlay` was repainted with `G.*`; `class C` (the old
+  palette) is still very much alive and used by `SetupOverlay`,
+  `RemoteKeyOverlay`, `_CameraPreview`, `_CameraStreamWindow`, and
+  `_SysMetrics` — don't assume `G` superseded `C`, they coexist by design
+  (one native surface on the new palette, several others still on the old
+  one).
+- `OnboardingOverlay` is a real floating top-level window (`_make_floating()`,
+  `WA_TranslucentBackground` + frameless + always-on-top), not a child
+  widget stacked over the `QWebEngineView` — native child widgets don't
+  reliably composite on top of a `QWebEngineView`'s own GPU surface, so
+  every overlay in this file (`SetupOverlay`, `OnboardingOverlay`,
+  `RemoteKeyOverlay`) went through this conversion when the web HUD landed.
+
+**Avengeance/"Avengers" font pack — removed.** `Plans/avengeance-fonts.md`
+documents the original introduction; `core/fonts.py` now just sets
+`DISPLAY_FAMILY`/`HEADER_BOLD_FAMILY`/`HEADER_FAMILY` to `""` (Qt's
+default-application-font sentinel) and `load_fonts()` is a no-op — kept
+only so `ui.py`'s one `jfonts.load_fonts()` call site and every existing
+`QFont(jfonts.X_FAMILY, ...)` call site don't need touching if a custom
+font is ever reintroduced. `assets/fonts/avengeance/` (and the now-empty
+`assets/` tree) and the matching `datas` entries in both PyInstaller specs
+are gone. The dev-only `FontDebugDialog` (`ui.py`) and its
+`MainWindow._show_font_debug()` existed solely to preview that pack and
+were deleted outright — **this also required removing the `showFontDebug`
+`pyqtSlot` from `ui_web_bridge.py::Bridge` and the `Ctrl+Shift+F` handler
+in `ui_web/hud.js`'s keydown listener**, since those called into the now-
+deleted method; the JS-side wiring is easy to miss when deleting a
+Python-side dev feature because `hud.js`'s bridge calls don't get caught
+by a Python-only grep for the deleted method name.
 
 ## Voice backends
 
@@ -405,6 +577,14 @@ repo style, not an oversight; don't "fix" it as a drive-by refactor.
 
 ## Build & packaging
 
+- **`scripts/build_mac.sh`** — one-shot macOS build: activates `.venv` if
+  present, runs `pyinstaller mark48-mac.spec`, then `scripts/build_dmg.sh`.
+  Produces `installer_output/JARVIS-Setup.dmg`. Must run on macOS.
+- **`scripts/build_windows_ci.sh [version]`** — triggers the Windows build
+  via GitHub Actions (`gh workflow run build-windows.yml`) rather than
+  building locally, since PyInstaller can't cross-compile a Windows exe
+  from macOS. Prints the `gh run watch` / `gh run download` follow-up
+  commands. Requires `gh` authenticated against the repo.
 - `mark48.spec` (Windows) / `mark48-mac.spec` (macOS) — PyInstaller specs.
   **Do not bundle `config/api_keys.json`, `config/vault_path.json`, or
   `config/certs/`** — those are per-user runtime data, explicitly excluded
@@ -600,6 +780,22 @@ repo style, not an oversight; don't "fix" it as a drive-by refactor.
     revisiting, don't just drop the certs back in without also fixing
     `get_manual_url()`/the alias-port split, since that pairing is what
     actually broke it.
+
+14. **`requirements-freeze.txt` (what the Windows CI build actually
+    installs) can silently drift from `requirements.txt` and `mark48.spec`'s
+    `hiddenimports`.** Shipped a Windows build that crashed on launch with
+    `ModuleNotFoundError: No module named 'PyQt6.QtWebEngineWidgets'` even
+    though `mark48.spec`'s `hiddenimports` correctly listed
+    `PyQt6.QtWebEngineWidgets`/`QtWebEngineCore`/`QtWebChannel` — the spec's
+    hidden-import list only tells PyInstaller to bundle a module *if it's
+    installed in the build env*; `requirements-freeze.txt` had `PyQt6` but
+    not `PyQt6-WebEngine`, so the package was never installed in CI in the
+    first place, and PyInstaller silently omitted it (no build-time error).
+    Fixed by adding `PyQt6-WebEngine` to `requirements-freeze.txt`. When
+    adding a new dependency that the packaged Windows build needs, update
+    `requirements-freeze.txt` too, not just `requirements.txt` — they are
+    not kept in sync automatically and CI only reads the freeze file (see
+    `scripts/build_windows_ci.sh` / `.github/workflows/build-windows.yml`).
 
 PUT ANY PLANS YOU MAKE INTO THE PLANS FOLDER
 WHEN BUGFIXING: ADD DEBUG LOGS IF THE INPUT/PROBLEM IS UNCLEAR, REMOVE WHEN DONE BUGFIXING

@@ -18,11 +18,14 @@ if platform.system() == "Windows":
 else:
     _WIN_HIDE: dict = {}
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QPixmap
+from PyQt6.QtCore import Qt, QRectF, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QPainter, QPainterPath, QPen, QPixmap,
+)
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QFileDialog, QFrame, QGraphicsBlurEffect, QGraphicsPixmapItem,
+    QGraphicsScene, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QPushButton,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
@@ -32,7 +35,15 @@ from ui_web_bridge import Bridge
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
+        exe_dir = Path(sys.executable).resolve().parent
+        if sys.platform == "darwin":
+            # See main.py::get_base_dir() — PyInstaller's macOS BUNDLE step
+            # puts non-binary `datas` (ui_web/, core/prompt.txt, ...) under
+            # Contents/Resources, not next to the executable in Contents/MacOS.
+            resources = exe_dir.parent / "Resources"
+            if resources.exists():
+                return resources
+        return exe_dir
     return Path(__file__).resolve().parent
 
 def _user_data_dir() -> Path:
@@ -106,6 +117,33 @@ class G:
 
 def qcol(h: str, a: int = 255) -> QColor:
     c = QColor(h); c.setAlpha(a); return c
+
+
+def _paint_glass_panel(widget: QWidget, bg: QColor, border: QColor, radius: int) -> None:
+    """Fill+stroke a rounded rect covering `widget` — the actual background
+    for every floating overlay in this file (SetupOverlay, OnboardingOverlay,
+    RemoteKeyOverlay). These are frameless, WA_TranslucentBackground
+    top-level QWidgets; relying on WA_StyledBackground + a QSS `background`/
+    `border-radius` alone to paint that top-level fill was found to render
+    fully transparent (confirmed on macOS — the stylesheet-driven primitive
+    paint for a frameless translucent top-level widget's own background
+    doesn't reliably composite, independent of WA_TranslucentBackground
+    being set correctly). Painting the fill directly via QPainter in each
+    overlay's paintEvent, called before its child widgets paint, sidesteps
+    the style engine for this one shape and is the guaranteed-to-render
+    fallback. Child widgets (labels, fields, buttons) keep using their own
+    QSS as normal — only the outer panel shape needed this."""
+    painter = QPainter(widget)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    rect = QRectF(widget.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+    path = QPainterPath()
+    path.addRoundedRect(rect, radius, radius)
+    painter.fillPath(path, QBrush(bg))
+    pen = QPen(border)
+    pen.setWidthF(1.0)
+    painter.setPen(pen)
+    painter.drawPath(path)
+    painter.end()
 
 
 # ── Windows GPU via NVML DLL (no subprocess, no console window) ──────────────
@@ -419,14 +457,6 @@ class SetupOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            SetupOverlay {{
-                background: rgba(0, 6, 10, 245);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
 
         detected = {"darwin": "mac", "windows": "windows"}.get(
             _OS.lower(), "linux"
@@ -558,6 +588,10 @@ class SetupOverlay(QWidget):
         init_btn.clicked.connect(self._submit)
         layout.addWidget(init_btn)
 
+    def paintEvent(self, event) -> None:
+        _paint_glass_panel(self, QColor(0, 6, 10, 245), qcol(C.BORDER_B), 6)
+        super().paintEvent(event)
+
     def _sel(self, key: str):
         self._sel_os = key
         pal = {"windows":(C.PRI,"#001a22"),"mac":(C.ACC2,"#1a1400"),"linux":(C.GREEN,"#001a0d")}
@@ -649,14 +683,6 @@ class OnboardingOverlay(QWidget):
 
     def __init__(self, parent=None, initial: dict | None = None, closable: bool = False):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            OnboardingOverlay {{
-                background: {G.PANEL_BG};
-                border: 1px solid {G.BORDER};
-                border-radius: 20px;
-            }}
-        """)
 
         initial = initial or {}
         self._closable     = closable
@@ -957,6 +983,10 @@ class OnboardingOverlay(QWidget):
         skip_btn.clicked.connect(self._cancel if closable else self._skip)
         layout.addWidget(skip_btn)
 
+    def paintEvent(self, event) -> None:
+        _paint_glass_panel(self, QColor(6, 11, 19, 250), QColor(120, 210, 255, 70), 20)
+        super().paintEvent(event)
+
     def _toggle_style(self, btns: dict, selected):
         for k, btn in btns.items():
             if k == selected:
@@ -1064,14 +1094,6 @@ class RemoteKeyOverlay(QWidget):
     def __init__(self, url: str, key: str, auto_login_url: str = "",
                  manual_url: str = "", expiry_secs: int = 600, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            RemoteKeyOverlay {{
-                background: rgba(0, 4, 12, 0.95);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 14px;
-            }}
-        """)
         self._expiry          = time.time() + expiry_secs
         self._on_new_key      = None
         self._auto_login_url  = auto_login_url
@@ -1182,6 +1204,10 @@ class RemoteKeyOverlay(QWidget):
         self._ctimer.start(1000)
         self._tick()
 
+    def paintEvent(self, event) -> None:
+        _paint_glass_panel(self, QColor(0, 4, 12, 242), qcol(C.BORDER_B), 14)
+        super().paintEvent(event)
+
     def set_new_key_callback(self, fn) -> None:
         self._on_new_key = fn
 
@@ -1282,6 +1308,119 @@ class RemoteKeyOverlay(QWidget):
         self.closed.emit()
 
 
+class LoadingOverlay(QWidget):
+    """Opaque splash shown while ui_web/index.html loads in the
+    QWebEngineView. Chromium paints the HTML/CSS/JS page progressively
+    (fonts, canvas waveform, stat tiles each arriving on their own frame),
+    which reads as the HUD "popping in piece by piece" — this covers the
+    whole window with a single static screen until loading has settled,
+    so the user sees nothing until the real HUD is fully painted.
+    Deliberately opaque (unlike every other overlay in this file, which is
+    WA_TranslucentBackground) — it needs to fully hide the webview
+    underneath while that's still rendering.
+
+    Renders an Apple-style frosted-glass backdrop rather than a flat QSS
+    color: relying on WA_StyledBackground + a stylesheet `background` on a
+    frameless top-level QWidget was observed rendering fully transparent
+    (a Cocoa layer-backing quirk on macOS — frameless windows don't always
+    get an opaque backing store from a stylesheet fill alone), so this
+    paints its own background directly in paintEvent to guarantee it's
+    actually opaque regardless of platform. set_backdrop() (called by
+    MainWindow right before this splash is shown) supplies a blurred grab
+    of whatever was on screen behind the window at that moment — a
+    one-shot still, not a live vibrancy surface, which is enough for a
+    splash this short-lived."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Every other floating overlay in this file gets this via
+        # _make_floating() (LoadingOverlay manages its own window flags
+        # separately, since it isn't positioned via _reposition_floats).
+        # Without it, a frameless top-level QWidget on macOS never gets a
+        # real alpha-compositing surface at all, so nothing paints through
+        # — not the old QSS background, not this class's own paintEvent
+        # fill either. Painting fully-opaque (alpha 255) pixels inside a
+        # translucent-capable window still reads as solid, so this is safe
+        # to combine with the "opaque splash" intent.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._backdrop: QPixmap | None = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addStretch()
+
+        title = QLabel("J.A.R.V.I.S")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont(jfonts.DISPLAY_FAMILY, 32, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {G.ACCENT}; background: transparent; letter-spacing: 6px;")
+        lay.addWidget(title)
+
+        self._sub = QLabel("INITIALISING SYSTEMS")
+        self._sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sub.setFont(QFont("Courier New", 10))
+        self._sub.setStyleSheet(f"color: {G.TEXT_DIM}; background: transparent; letter-spacing: 3px; margin-top: 14px;")
+        lay.addWidget(self._sub)
+
+        bar_row = QHBoxLayout()
+        bar_row.addStretch()
+        self._bar = QProgressBar()
+        self._bar.setFixedWidth(220)
+        self._bar.setFixedHeight(3)
+        self._bar.setTextVisible(False)
+        self._bar.setRange(0, 0)   # indeterminate/marquee
+        self._bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: {G.FIELD_BG};
+                border: none;
+                border-radius: 1px;
+                margin-top: 18px;
+            }}
+            QProgressBar::chunk {{
+                background: {G.ACCENT};
+                border-radius: 1px;
+            }}
+        """)
+        bar_row.addWidget(self._bar)
+        bar_row.addStretch()
+        lay.addLayout(bar_row)
+
+        lay.addStretch()
+
+    def set_backdrop(self, pixmap: QPixmap | None) -> None:
+        """Blur `pixmap` (a grab of whatever was on screen behind this
+        window, taken by the caller right before this splash appears) and
+        use it as the glass backdrop. Falls back to a flat fill in
+        paintEvent if this is never called or the grab failed/was empty."""
+        if pixmap is None or pixmap.isNull():
+            self._backdrop = None
+            self.update()
+            return
+        scene = QGraphicsScene()
+        item = QGraphicsPixmapItem(pixmap)
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(48)
+        item.setGraphicsEffect(blur)
+        scene.addItem(item)
+        blurred = QPixmap(pixmap.size())
+        blurred.fill(Qt.GlobalColor.black)
+        painter = QPainter(blurred)
+        scene.render(painter)
+        painter.end()
+        self._backdrop = blurred
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        if self._backdrop is not None:
+            painter.drawPixmap(self.rect(), self._backdrop)
+        else:
+            painter.fillRect(self.rect(), QColor(6, 11, 19, 255))
+        # glass tint over the blurred backdrop, matching G.PANEL_BG's hue,
+        # so text stays legible regardless of what was behind the window
+        painter.fillRect(self.rect(), QColor(6, 11, 19, 205))
+        painter.end()
+
+
 class MainWindow(QMainWindow):
     _log_sig     = pyqtSignal(str)
     _state_sig   = pyqtSignal(str)
@@ -1328,7 +1467,28 @@ class MainWindow(QMainWindow):
         self._channel = QWebChannel(self._webview.page())
         self._channel.registerObject("bridge", self._bridge)
         self._webview.page().setWebChannel(self._channel)
+
+        # Loading splash — covers the window while the web HUD paints
+        # progressively underneath, then gets torn down once it's settled.
+        # See LoadingOverlay's docstring for why it's opaque rather than
+        # translucent like every other overlay here.
+        self._loading = LoadingOverlay()
+        self._loading.setWindowFlags(
+            Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self._webview.loadFinished.connect(self._on_web_load_finished)
         self._webview.setUrl(QUrl.fromLocalFile(str(BASE_DIR / "ui_web" / "index.html")))
+        self._loading.setGeometry(self.geometry())
+        # One-shot grab of whatever's on screen behind the splash, blurred
+        # in LoadingOverlay.set_backdrop() for the Apple-glass look — taken
+        # right before show() since it needs to capture the desktop as it
+        # currently is, not this (not-yet-painted) window.
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            g = self._loading.geometry()
+            self._loading.set_backdrop(screen.grabWindow(0, g.x(), g.y(), g.width(), g.height()))
+        self._loading.show()
 
         # Camera windows (native, floating — see plan: the new design has no
         # camera panel, so these stay outside the web view entirely)
@@ -1352,9 +1512,26 @@ class MainWindow(QMainWindow):
         self._cam_frame_sig.connect(self._on_cam_frame)
         self._cam_stop = threading.Event()
 
-        self._ready = self._check_config()
+        self._ready = False   # flips to True in _finish_ready(); the setup-
+                                # overlay check itself waits for the web HUD
+                                # to finish loading, see _on_web_load_finished
+
+    def _on_web_load_finished(self, ok: bool):
+        """QWebEngineView.loadFinished — the DOM has parsed, but hud.js is
+        still wiring the bridge/rendering the waveform/stat tiles for another
+        frame or two, so a short settle delay before dropping the loading
+        splash keeps the reveal from showing that pop-in too."""
+        QTimer.singleShot(300, self._dismiss_loading)
+
+    def _dismiss_loading(self):
+        if self._loading is not None:
+            self._loading.hide()
+            self._loading.deleteLater()
+            self._loading = None
         if not self._ready:
-            self._show_setup()
+            self._ready = self._check_config()
+            if not self._ready:
+                self._show_setup()
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -1705,6 +1882,8 @@ class MainWindow(QMainWindow):
         """Keep every native floating window aligned over the main window —
         top-level windows don't auto-follow a 'parent' the way child
         widgets did, so this must be called on move/resize."""
+        if self._loading is not None and self._loading.isVisible():
+            self._loading.setGeometry(self.geometry())
         if self._overlay is not None and self._overlay.isVisible():
             ow = getattr(type(self._overlay), "_OW", 460)
             oh = getattr(type(self._overlay), "_OH", 390)

@@ -191,7 +191,6 @@
     if (e.key === 'F4') { e.preventDefault(); bridge.toggleMute(); }
     else if (e.key === 'F11') { e.preventDefault(); bridge.toggleFullscreen(); }
     else if (e.key === 'Escape') { e.preventDefault(); bridge.clickInterrupt(); }
-    else if (e.ctrlKey && e.shiftKey && (e.key === 'F' || e.key === 'f')) { e.preventDefault(); bridge.showFontDebug(); }
   });
 
   // ---- standalone preview mode (opened directly in a browser, no Qt backing) ----

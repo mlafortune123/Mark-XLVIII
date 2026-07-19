@@ -83,7 +83,17 @@ for _tools in (_OPEN_APP_TOOLS, _WEATHER_TOOLS, _SEND_MESSAGE_TOOLS, _REMINDER_T
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
+        exe_dir = Path(sys.executable).resolve().parent
+        if sys.platform == "darwin":
+            # PyInstaller's macOS BUNDLE step moves non-binary `datas` (core/
+            # prompt.txt, ui_web/, core/voice_previews/, config/jarvis.ico)
+            # into JARVIS.app/Contents/Resources — only the executable itself
+            # stays next to sys.executable in Contents/MacOS. Without this,
+            # bundled resources 404/ERR_FILE_NOT_FOUND in a packaged .app.
+            resources = exe_dir.parent / "Resources"
+            if resources.exists():
+                return resources
+        return exe_dir
     return Path(__file__).resolve().parent
 
 

@@ -106,7 +106,3 @@ class Bridge(QObject):
     @pyqtSlot()
     def toggleFullscreen(self) -> None:
         self._win._toggle_fullscreen()
-
-    @pyqtSlot()
-    def showFontDebug(self) -> None:
-        self._win._show_font_debug()

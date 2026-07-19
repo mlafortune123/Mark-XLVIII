@@ -84,7 +84,14 @@ def _install_dir() -> Path:
     rather than imported — this repo's convention for small base-dir/OS
     helpers, see CLAUDE.md."""
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
+        exe_dir = Path(sys.executable).resolve().parent
+        if sys.platform == "darwin":
+            # See main.py::get_base_dir() — macOS BUNDLE puts `datas` under
+            # Contents/Resources, not next to the executable.
+            resources = exe_dir.parent / "Resources"
+            if resources.exists():
+                return resources
+        return exe_dir
     return Path(__file__).resolve().parent.parent
 
 
