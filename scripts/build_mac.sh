@@ -19,5 +19,5 @@ if ! command -v pyinstaller >/dev/null 2>&1; then
     exit 1
 fi
 
-pyinstaller mark48-mac.spec
+pyinstaller --noconfirm mark48-mac.spec
 ./scripts/build_dmg.sh
