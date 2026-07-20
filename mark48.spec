@@ -68,7 +68,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=True,  # TEMP: diagnosing Windows launch issue, revert to False after
     icon='config/jarvis.ico',
 )
 
