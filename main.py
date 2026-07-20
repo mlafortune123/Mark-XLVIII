@@ -1,3 +1,106 @@
+# TEMP: comprehensive startup diagnostics for the Windows launch/HUD-load
+# issue currently being tracked down. Placed as the very first code in the
+# file, ahead of every other import, so it captures the process's state
+# and any failure regardless of where it happens (import time, module
+# init, or later at runtime) — even failures that would otherwise crash
+# silently under console=False. Remove once root-caused (see CLAUDE.md
+# bugfixing rule).
+import sys as _sys
+import os as _os
+import time as _time
+import traceback as _traceback
+from pathlib import Path as _Path
+
+def _diag_user_data_dir() -> _Path:
+    if getattr(_sys, "frozen", False):
+        appdata = _os.environ.get("APPDATA")
+        if appdata:
+            return _Path(appdata) / "JARVIS"
+        if _sys.platform == "darwin":
+            return _Path.home() / "Library" / "Application Support" / "JARVIS"
+        return _Path(_sys.executable).resolve().parent
+    return _Path(__file__).resolve().parent
+
+_DIAG_LOG_PATH = _diag_user_data_dir() / "webview_debug.log"
+
+def _diag_log(msg: str) -> None:
+    try:
+        _DIAG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_DIAG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{_time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+class _DiagTeeStream:
+    """Mirrors writes to the real stream (if any — console=False means
+    sys.stdout/stderr can be None in a frozen GUI app) and into the debug
+    log, so print()s and uncaught tracebacks are visible even with no
+    console attached."""
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, data):
+        if self._stream is not None:
+            try:
+                self._stream.write(data)
+            except Exception:
+                pass
+        if data and data.strip():
+            _diag_log(f"[stdio] {data.rstrip()}")
+
+    def flush(self):
+        if self._stream is not None:
+            try:
+                self._stream.flush()
+            except Exception:
+                pass
+
+_sys.stdout = _DiagTeeStream(_sys.stdout)
+_sys.stderr = _DiagTeeStream(_sys.stderr)
+
+def _diag_excepthook(exc_type, exc_value, exc_tb):
+    _diag_log(
+        "UNCAUGHT EXCEPTION:\n"
+        + "".join(_traceback.format_exception(exc_type, exc_value, exc_tb))
+    )
+    if _sys.__excepthook__ is not None:
+        _sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+_sys.excepthook = _diag_excepthook
+
+try:
+    _meipass = getattr(_sys, "_MEIPASS", None)
+    _exe_dir = _Path(_sys.executable).resolve().parent if getattr(_sys, "frozen", False) else None
+    _diag_log(
+        f"=== main.py process starting ===\n"
+        f"  executable={_sys.executable}\n"
+        f"  frozen={getattr(_sys, 'frozen', False)}\n"
+        f"  _MEIPASS={_meipass}\n"
+        f"  argv={_sys.argv}\n"
+        f"  cwd={_os.getcwd()}\n"
+        f"  APPDATA={_os.environ.get('APPDATA')}\n"
+        f"  LOCALAPPDATA={_os.environ.get('LOCALAPPDATA')}\n"
+        f"  platform={_sys.platform} python={_sys.version}"
+    )
+    if _exe_dir is not None and _exe_dir.exists():
+        _diag_log(f"  exe_dir listing ({_exe_dir}): {sorted(p.name for p in _exe_dir.iterdir())}")
+    if _meipass:
+        _meipass_path = _Path(_meipass)
+        if _meipass_path.exists():
+            _diag_log(f"  _MEIPASS listing ({_meipass_path}): {sorted(p.name for p in _meipass_path.iterdir())}")
+            _uw = _meipass_path / "ui_web"
+            if _uw.exists():
+                _diag_log(f"  _MEIPASS/ui_web listing: {sorted(p.name for p in _uw.iterdir())}")
+                _idx = _uw / "index.html"
+                _diag_log(f"  _MEIPASS/ui_web/index.html exists={_idx.exists()} size={_idx.stat().st_size if _idx.exists() else 'n/a'}")
+            else:
+                _diag_log("  _MEIPASS/ui_web does NOT exist")
+        else:
+            _diag_log(f"  _MEIPASS path does not exist on disk: {_meipass_path}")
+except Exception as _diag_e:
+    _diag_log(f"startup diagnostics block itself failed: {_diag_e!r}\n{_traceback.format_exc()}")
+# ─────────────────────────────────────────────────────────────────────────────
+
 import platform as _platform
 import subprocess as _subprocess
 
