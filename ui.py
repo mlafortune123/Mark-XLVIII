@@ -43,6 +43,15 @@ def _base_dir() -> Path:
             resources = exe_dir.parent / "Resources"
             if resources.exists():
                 return resources
+            return exe_dir
+        # See main.py::get_base_dir() — on Windows, mark48.spec's
+        # contents_directory='.' was found not to actually flatten datas
+        # next to the exe (PyInstaller 6.21 still put them under
+        # `_internal/`), so use sys._MEIPASS (PyInstaller's own record of
+        # where datas landed) instead of assuming a flat layout.
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
         return exe_dir
     return Path(__file__).resolve().parent
 
@@ -61,6 +70,36 @@ def _user_data_dir() -> Path:
 BASE_DIR   = _base_dir()
 CONFIG_DIR = _user_data_dir() / "config"
 API_FILE   = CONFIG_DIR / "api_keys.json"
+
+# TEMP debug logging — round 2 of diagnosing the QWebEngineView "file may
+# have moved" launch issue on Windows. Remove once root-caused (see
+# CLAUDE.md bugfixing rule).
+_DEBUG_LOG_PATH = _user_data_dir() / "webview_debug.log"
+
+def _debug_log(msg: str) -> None:
+    try:
+        _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+try:
+    _debug_log(
+        f"=== startup === sys.executable={sys.executable} BASE_DIR={BASE_DIR} "
+        f"frozen={getattr(sys, 'frozen', False)} argv0={sys.argv[0] if sys.argv else None}"
+    )
+    if BASE_DIR.exists():
+        _debug_log(f"BASE_DIR listing: {sorted(p.name for p in BASE_DIR.iterdir())}")
+    else:
+        _debug_log("BASE_DIR does not exist")
+    ui_web_dir = BASE_DIR / "ui_web"
+    if ui_web_dir.exists():
+        _debug_log(f"ui_web listing: {sorted(p.name for p in ui_web_dir.iterdir())}")
+    else:
+        _debug_log("ui_web dir does not exist under BASE_DIR")
+except Exception as _e:
+    _debug_log(f"startup diagnostics failed: {_e!r}")
 
 _DEFAULT_W, _DEFAULT_H = 1600, 1000
 _MIN_W,     _MIN_H     = 820, 580
@@ -1523,11 +1562,16 @@ class MainWindow(QMainWindow):
         still wiring the bridge/rendering the waveform/stat tiles for another
         frame or two, so a short settle delay before dropping the loading
         splash keeps the reveal from showing that pop-in too."""
+        index_path = BASE_DIR / "ui_web" / "index.html"
+        _debug_log(
+            f"loadFinished ok={ok} current_url={self._webview.url().toString()} "
+            f"index_exists_now={index_path.exists()}"
+        )
         if not ok and not self._web_retried:
             # Defensive one-shot reload in case the WebEngine renderer
             # process isn't fully up yet on the very first navigation.
             self._web_retried = True
-            index_path = BASE_DIR / "ui_web" / "index.html"
+            _debug_log("load failed — retrying once")
             QTimer.singleShot(500, lambda: self._webview.setUrl(
                 QUrl.fromLocalFile(str(index_path))
             ))

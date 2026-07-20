@@ -93,6 +93,21 @@ def get_base_dir():
             resources = exe_dir.parent / "Resources"
             if resources.exists():
                 return resources
+            return exe_dir
+        # Windows/Linux onedir builds: don't assume datas land flat next to
+        # the exe. mark48.spec's COLLECT sets contents_directory='.' to try
+        # to force that layout, but this was found (Windows, PyInstaller
+        # 6.21) to be silently ignored — datas still land under an
+        # `_internal/` subfolder while only the exe itself stays flat,
+        # which made every bundled-resource lookup (core/prompt.txt,
+        # ui_web/, core/voice_previews/) 404 at runtime regardless of
+        # where the app was installed. sys._MEIPASS is PyInstaller's own
+        # answer to "where did datas actually land" for onedir builds and
+        # is correct independent of contents_directory's behavior, so
+        # prefer it whenever it's set.
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
         return exe_dir
     return Path(__file__).resolve().parent
 

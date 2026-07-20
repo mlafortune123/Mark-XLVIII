@@ -91,6 +91,14 @@ def _install_dir() -> Path:
             resources = exe_dir.parent / "Resources"
             if resources.exists():
                 return resources
+            return exe_dir
+        # See main.py::get_base_dir() — Windows onedir datas don't actually
+        # land flat next to the exe despite mark48.spec's
+        # contents_directory='.', so use sys._MEIPASS instead of assuming
+        # a flat layout.
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
         return exe_dir
     return Path(__file__).resolve().parent.parent
 

@@ -80,10 +80,15 @@ coll = COLLECT(
     strip=False,
     upx=False,
     name='JARVIS',
-    # Keep bundled files flat next to the exe (dist/JARVIS/core/...,
-    # dist/JARVIS/config/...) instead of PyInstaller 6's default
-    # _internal/ subfolder — the app's own path resolution
-    # (Path(sys.executable).parent / "core" / "prompt.txt", etc.) assumes
-    # a flat layout.
-    contents_directory='.',
+    # contents_directory='.' (tried here previously, to keep bundled files
+    # flat next to the exe) was found NOT to actually flatten the layout —
+    # verified against a real CI build on PyInstaller 6.21: only JARVIS.exe
+    # ended up flat in dist/JARVIS/, everything else (DLLs, core/, ui_web/,
+    # ...) still landed under dist/JARVIS/_internal/. Removed rather than
+    # left in place misleadingly. The app's own path resolution
+    # (main.py::get_base_dir(), ui.py::_base_dir(), etc.) now reads
+    # sys._MEIPASS instead of assuming a flat layout, which is correct
+    # regardless of what PyInstaller names this subfolder or whether it
+    # exists at all — don't reintroduce a flat-layout assumption elsewhere
+    # without checking those functions first.
 )

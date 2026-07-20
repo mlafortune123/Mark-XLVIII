@@ -821,7 +821,48 @@ repo style, not an oversight; don't "fix" it as a drive-by refactor.
     folder (and ideally the old registry key,
     `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B1F2C6A0-6C1E-4C7B-9C7A-6C6D3D6E9A48}_is1`)
     removed manually once — the new GUID means it'll never self-heal via
-    reinstall.
+    reinstall. **Correction: this was a real bug worth fixing, but turned
+    out NOT to be the actual cause of the "file may have moved" launch
+    error** — see gotcha 16, which is the real one. Diagnosed this one
+    first purely from a single debug-log line showing an unexpected
+    `MarkXLVIII` path and jumped to a plausible-sounding theory without
+    verifying the file was actually missing at the *correct* path too;
+    it wasn't until inspecting the raw CI build log directly that the
+    real cause turned up. Don't stop at the first theory that explains
+    the symptom — confirm it against the actual build/install artifacts
+    before shipping a fix and declaring victory.
+16. **PyInstaller's `contents_directory='.'` COLLECT option does not
+    reliably flatten a Windows onedir build's layout — verified false on
+    PyInstaller 6.21.0 via a real CI build's file log.** `mark48.spec` set
+    this specifically so bundled datas (`core/prompt.txt`, `ui_web/`,
+    `core/voice_previews/`, ...) would sit flat next to `JARVIS.exe`
+    (`dist/JARVIS/ui_web/...`), because `main.py::get_base_dir()`,
+    `ui.py::_base_dir()`, and `core/voice_preview.py::_install_dir()` all
+    resolved bundled-resource paths as `Path(sys.executable).resolve().parent /
+    "ui_web" / ...`. In practice (confirmed by grepping the "Compile
+    installer" Inno Setup step's file-by-file log from an actual GitHub
+    Actions run), only `JARVIS.exe` itself ended up flat in `dist/JARVIS/`
+    — every single other bundled file, `ui_web/index.html` included, still
+    landed under `dist/JARVIS/_internal/...`. Since the three functions
+    above all assumed a flat layout, every bundled-resource lookup on
+    Windows resolved one directory too shallow, and for `ui.py` this
+    surfaced as `QWebEngineView` navigating to a nonexistent
+    `ui_web/index.html` and rendering Chromium's local "file may have
+    moved" error page in place of the HUD — present since the web-HUD
+    rewrite, on every Windows build, regardless of install path (gotcha 15
+    above was a red herring chased first). Fixed by dropping
+    `contents_directory` entirely and switching all three functions to
+    prefer `sys._MEIPASS` (frozen-app path PyInstaller itself sets to
+    wherever datas actually landed, for onedir *and* onefile builds,
+    independent of subfolder naming) over the flat-layout assumption, with
+    `Path(sys.executable).resolve().parent` only as a same-directory
+    fallback if `_MEIPASS` is ever unset. **If you add a new Windows-only
+    bundled-resource lookup, use `sys._MEIPASS`, not
+    `Path(sys.executable).parent`** — the latter is only correct for
+    locating the exe itself or for per-user `%APPDATA%` writable paths
+    (see `memory/config_manager.py`, `actions/*.py`'s `_base_dir()`
+    helpers, `core/llm_client.py` — those are fine as-is, since they
+    target writable per-user data, not bundled read-only resources).
 
 PUT ANY PLANS YOU MAKE INTO THE PLANS FOLDER
 WHEN BUGFIXING: ADD DEBUG LOGS IF THE INPUT/PROBLEM IS UNCLEAR, REMOVE WHEN DONE BUGFIXING
