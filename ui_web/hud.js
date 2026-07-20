@@ -13,7 +13,7 @@
     logList: $('#logList'),
     draftInput: $('#draftInput'), sendBtn: $('#sendBtn'),
     muteBtn: $('#muteBtn'), interruptBtn: $('#interruptBtn'), remoteBtn: $('#remoteBtn'),
-    attachBtn: $('#attachBtn'), prefsBtn: $('#prefsBtn'),
+    attachBtn: $('#attachBtn'), prefsBtn: $('#prefsBtn'), fullscreenBtn: $('#fullscreenBtn'),
     micLabel: $('#micLabel'), dropHint: $('#dropHint'),
   };
 
@@ -155,6 +155,7 @@
   els.remoteBtn.addEventListener('click', () => { if (bridge) bridge.clickRemote(); });
   els.attachBtn.addEventListener('click', () => { if (bridge) bridge.requestFileDialog(); });
   els.prefsBtn.addEventListener('click', () => { if (bridge) bridge.openPreferences(); });
+  els.fullscreenBtn.addEventListener('click', () => { if (bridge) bridge.toggleFullscreen(); });
 
   // native drag-over visual cue (the native _DropOverlay handles the actual drop;
   // this is just an in-page tint so the page doesn't look dead during a drag)

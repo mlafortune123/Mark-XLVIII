@@ -40,3 +40,4 @@ dist/
 installer_output/
 /newDesign
 /plans
+webview_debug.log
