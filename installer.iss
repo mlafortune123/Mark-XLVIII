@@ -13,7 +13,17 @@
 #define MySourceDir "dist\JARVIS"
 
 [Setup]
-AppId={{B1F2C6A0-6C1E-4C7B-9C7A-6C6D3D6E9A48}}
+; This GUID was rotated from the original {{B1F2C6A0-6C1E-4C7B-9C7A-6C6D3D6E9A48}}
+; used back when this app was branded "MARK XLVIII" (DefaultDirName was
+; {localappdata}\Programs\MarkXLVIII). Inno Setup keys its uninstall/upgrade
+; registry entry (HKCU\...\Uninstall\{AppId}_is1) purely by AppId and remembers
+; the *original* install path forever via "Inno Setup: App Path" — so on any
+; machine that ever ran the old MarkXLVIII-branded build, every later install
+; using the same AppId (this one, pre-rotation) silently reused that old path
+; instead of the new DefaultDirName below, even after uninstalling/deleting the
+; folder, because the registry association wasn't guaranteed to be cleared.
+; Do not revert this to the old GUID.
+AppId={{C42C19AC-6121-427A-B51D-8F43FD863E48}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}

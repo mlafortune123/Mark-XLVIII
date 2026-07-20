@@ -796,6 +796,32 @@ repo style, not an oversight; don't "fix" it as a drive-by refactor.
     `requirements-freeze.txt` too, not just `requirements.txt` — they are
     not kept in sync automatically and CI only reads the freeze file (see
     `scripts/build_windows_ci.sh` / `.github/workflows/build-windows.yml`).
+15. **`installer.iss`'s `AppId` GUID must be rotated whenever the app is
+    renamed/rebranded, or Windows installs keep landing in the old app's
+    folder forever.** When the app was renamed `MARK XLVIII` → `JARVIS`
+    (commit `634bb26`), `DefaultDirName` was updated
+    (`{localappdata}\Programs\MarkXLVIII` → `...\Programs\JARVIS`) but the
+    `AppId` GUID was left unchanged. Inno Setup keys its uninstall/upgrade
+    registry entry (`HKCU\...\Uninstall\{AppId}_is1`, "Inno Setup: App
+    Path") purely by `AppId`, and every install sharing that GUID reuses
+    the path recorded there — on any machine that had ever run the old
+    MarkXLVIII-branded installer, subsequent JARVIS-branded installs
+    silently reinstalled into the stale `...\Programs\MarkXLVIII` path
+    instead of the new `DefaultDirName`, and the app's own `ui_web` HUD
+    assets weren't present there (predates the web-HUD rewrite), producing
+    a QWebEngineView "file may have moved" error at launch. This persisted
+    even after uninstalling through Windows Settings and manually deleting
+    the folder — deleting the folder doesn't guarantee the registry
+    App-Path association clears. Fixed by rotating to a fresh `AppId`
+    (`C42C19AC-6121-427A-B51D-8F43FD863E48`), which severs the link
+    entirely and forces a clean install at the current `DefaultDirName`.
+    Any future rename/rebrand of this app needs the same treatment: change
+    `AppId`, not just `MyAppName`/`DefaultDirName`. Affected machines with
+    a pre-rotation install still need the leftover `...\Programs\MarkXLVIII`
+    folder (and ideally the old registry key,
+    `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B1F2C6A0-6C1E-4C7B-9C7A-6C6D3D6E9A48}_is1`)
+    removed manually once — the new GUID means it'll never self-heal via
+    reinstall.
 
 PUT ANY PLANS YOU MAKE INTO THE PLANS FOLDER
 WHEN BUGFIXING: ADD DEBUG LOGS IF THE INPUT/PROBLEM IS UNCLEAR, REMOVE WHEN DONE BUGFIXING
