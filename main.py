@@ -1307,6 +1307,13 @@ class JarvisLive:
         self.ui.write_log("SYS: JARVIS online.")
         if self._dashboard:
             asyncio.create_task(self._dashboard.broadcast({"type": "status", "state": "active"}))
+
+        # Morning briefing — fires once per process launch, only once the
+        # session is actually connected (not a fixed-delay guess that used
+        # to race the connect handshake and silently lose).
+        if not self._briefing_sent:
+            self._briefing_sent = True
+            asyncio.create_task(self._send_startup_briefing())
         if isinstance(voice_session, GeminiLiveSession):
             if directive := self._priming_directive():
                 asyncio.create_task(voice_session.send_text(directive, turn_complete=True))
@@ -1393,11 +1400,6 @@ class JarvisLive:
                         tg.create_task(self._run_topic_digest())
                         if self._dashboard:
                             tg.create_task(self._relay_phone_audio())
-
-                        # Morning briefing — fires once per process launch
-                        if not self._briefing_sent:
-                            self._briefing_sent = True
-                            tg.create_task(self._send_startup_briefing())
 
                 # Wrapped in its own Task (rather than awaited inline) so
                 # _change_voice()/_await_reconnect() can force a clean
